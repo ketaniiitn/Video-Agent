@@ -6,10 +6,16 @@ middleware in ``app/main.py``, so it is already set before this module runs):
 1. Validate ``Idempotency-Key`` + ``X-Tenant-Id`` headers -> 400 if missing.
 2. Feature flag ``FEATURE_STORY_PLANNING`` -> 403 ``FEATURE_DISABLED`` (no
    idempotency write, no job row).
-3. Resolve idempotency (Redis fast path, Postgres source of truth).
-4. On a fresh key: insert the job ``QUEUED``, commit, mirror to Redis,
-   write initial progress, schedule the background run, return 202.
-   On replay: return the existing job id + status untouched.
+3. Resolve idempotency (Redis fast path verified against Postgres, then
+   Postgres as source of truth). The candidate ``Job`` row is added and
+   flushed *before* the idempotency key row that has a foreign key to it,
+   both inside the same transaction/SAVEPOINT, so a conflicting key rolls
+   both back together instead of leaving an orphaned job.
+4. On a fresh key: commit (job + idempotency key together), mirror to
+   Redis, write initial progress, schedule the background run, return 202.
+   On replay: return the existing job id + status untouched. If the
+   replay target no longer exists in Postgres, fail honestly instead of
+   fabricating a status.
 """
 
 from __future__ import annotations
@@ -125,29 +131,43 @@ async def create_job(
     digest = request_hash(body.prompt, body.budget)
     candidate_job_id = uuid4()
     budget = body.budget or BudgetCaps()
+    candidate_job = Job(
+        id=candidate_job_id,
+        tenant_id=tenant_id,
+        status=JobStatus.QUEUED,
+        prompt=body.prompt,
+        trace_id=resolve_trace_id(),
+        budget_max_usd=budget.budget_max_usd,
+        budget_max_tokens=budget.budget_max_tokens,
+        budget_max_iterations=budget.budget_max_iterations,
+        budget_max_wall_clock_seconds=budget.budget_max_wall_clock_seconds,
+    )
 
     async with state.session_factory(tenant_id) as session:
         outcome = await resolve_idempotency(
-            session, state.redis, tenant_id, idempotency_key, digest, candidate_job_id
+            session,
+            state.redis,
+            tenant_id,
+            idempotency_key,
+            digest,
+            candidate_job_id,
+            job=candidate_job,
         )
         if outcome.kind == "replay":
             job = await session.get(Job, outcome.job_id)
-            status = job.status if job is not None else JobStatus.QUEUED
-            return CreateJobResponse(job_id=outcome.job_id, status=status)
+            if job is None:
+                # Postgres is the source of truth and never fabricates a
+                # status for a job that isn't there; the idempotency key
+                # row FKs to jobs with ON DELETE CASCADE so this should be
+                # unreachable in practice, but fail honestly rather than
+                # lie about QUEUED if it ever happens.
+                raise AppError(
+                    "JOB_NOT_FOUND",
+                    "Idempotency key resolved to a job that no longer exists",
+                    http_status=404,
+                )
+            return CreateJobResponse(job_id=outcome.job_id, status=job.status)
 
-        session.add(
-            Job(
-                id=candidate_job_id,
-                tenant_id=tenant_id,
-                status=JobStatus.QUEUED,
-                prompt=body.prompt,
-                trace_id=resolve_trace_id(),
-                budget_max_usd=budget.budget_max_usd,
-                budget_max_tokens=budget.budget_max_tokens,
-                budget_max_iterations=budget.budget_max_iterations,
-                budget_max_wall_clock_seconds=budget.budget_max_wall_clock_seconds,
-            )
-        )
         await session.commit()
 
     await mirror_idempotency_to_redis(

@@ -53,6 +53,16 @@ cross-tenant writes are rejected as well as cross-tenant reads.
 Application transactions set `app.tenant_id` locally before accessing tenant
 data. A missing setting exposes no tenant rows.
 
+Every tenant table is also `FORCE ROW LEVEL SECURITY`, so RLS binds every
+role, including the table owner — there is no owner-bypass escape hatch.
+The startup sweep (`app/jobs/runner.py::sweep_stale_jobs`) reads
+non-terminal jobs across all tenants and therefore needs a role with
+`BYPASSRLS` (or `SET ROLE` to one) on a connection distinct from the
+per-request pool. `Settings.database_url_sweep` (optional; falls back to
+`database_url`) is that DSN — see `.env.example` and
+`app/db/session.py::get_raw_session`. The per-request path must never use
+this DSN or role.
+
 ## Deferred
 
 `shots`, `qc_scores`, and `cost_ledger` arrive with later M1 pipeline tasks.

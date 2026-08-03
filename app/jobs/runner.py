@@ -53,6 +53,7 @@ _OUTCOME_TO_STATUS: dict[str, JobStatus] = {
     "SUCCESS": JobStatus.BIBLE_LOCKED,
     "PARTIAL": JobStatus.PARTIAL,
     "FAILED": JobStatus.FAILED,
+    "FAILED_NO_PROGRESS": JobStatus.FAILED_NO_PROGRESS,
     "ESCALATED": JobStatus.ESCALATED,
 }
 
@@ -90,10 +91,13 @@ async def run_locked_job(
     graph: Any,
 ) -> None:
     """Run the graph to completion. Caller must already hold ``lock:{job_id}``."""
-    initial_state = await _mark_running(session_factory, tenant_id, job_id)
     config = {
         "configurable": {"thread_id": str(job_id), "tenant_id": str(tenant_id)}
     }
+    has_checkpoint = await _has_checkpoint(graph, config)
+    initial_state = await _mark_running(
+        session_factory, tenant_id, job_id, needs_initial_state=not has_checkpoint
+    )
     try:
         result = await graph.ainvoke(initial_state, config)
     except AppError:
@@ -158,23 +162,45 @@ def _log_task_exception(task: asyncio.Task) -> None:
         logger.error("background job task failed", exc_info=exc)
 
 
+async def _has_checkpoint(graph: Any, config: dict) -> bool:
+    """Whether LangGraph already has a checkpoint for this thread_id.
+
+    This — not ``Job.started_at`` — is the correct proxy for "does this run
+    need an initial state". ``started_at`` is set the moment a run starts,
+    but a crash before the graph's first node commits its checkpoint leaves
+    ``started_at`` populated with zero checkpoints on disk. Passing
+    ``initial_state=None`` (LangGraph's "resume" shape) in that situation
+    invokes the graph with no input and no prior state, which raises
+    ``EmptyInputError`` instead of ever running the job.
+    """
+    checkpointer = getattr(graph, "checkpointer", None)
+    if checkpointer is None:
+        return False
+    checkpoint_tuple = await checkpointer.aget_tuple(config)
+    return checkpoint_tuple is not None
+
+
 async def _mark_running(
-    session_factory: SessionFactory, tenant_id: UUID, job_id: UUID
+    session_factory: SessionFactory,
+    tenant_id: UUID,
+    job_id: UUID,
+    *,
+    needs_initial_state: bool,
 ) -> dict | None:
     """Set RUNNING + ``started_at`` (once). Returns the graph's initial state
-    for a fresh run, or ``None`` to resume from an existing checkpoint."""
+    when ``needs_initial_state`` (no checkpoint exists yet), or ``None`` to
+    resume from an existing checkpoint."""
     async with session_factory(tenant_id) as session:
         job = await session.get(Job, job_id)
         if job is None or job.tenant_id != tenant_id:
             raise AppError("JOB_NOT_FOUND", "Job was not found", http_status=404)
 
-        is_first_run = job.started_at is None
-        if is_first_run:
+        if job.started_at is None:
             job.started_at = datetime.now(UTC)
         job.status = JobStatus.RUNNING
 
         initial_state = None
-        if is_first_run:
+        if needs_initial_state:
             initial_state = {
                 "job_id": str(job.id),
                 "tenant_id": str(job.tenant_id),

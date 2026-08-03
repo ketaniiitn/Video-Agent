@@ -61,10 +61,15 @@ async def get_raw_session(
     Only the startup sweep (finding non-terminal jobs across all tenants)
     should use this. It reads no tenant-scoped columns beyond ``id`` and
     ``tenant_id`` needed to route work back through the tenant-scoped
-    ``get_session`` for everything else. In production, forced RLS means
-    this only sees rows if the connecting role has ``BYPASSRLS`` (or is the
-    table owner without ``FORCE ROW LEVEL SECURITY`` friction) — grant that
-    to the app's sweep role, not to the general per-request role.
+    ``get_session`` for everything else. In production, FORCE ROW LEVEL
+    SECURITY means this only sees rows if the connecting role has
+    ``BYPASSRLS`` (FORCE applies to every role, including the table owner,
+    once set) — grant that to a role dedicated to the sweep, not to the
+    general per-request role, and point ``Settings.database_url_sweep`` at
+    a DSN that connects as it (see ``app/main.py``'s lifespan, which builds
+    a separate engine/sessionmaker from that DSN and passes its
+    sessionmaker in here). The request path's ``get_session`` above must
+    keep using the normal, RLS-forced per-request DSN unconditionally.
     """
     maker = sessionmaker or _get_default_sessionmaker()
     async with maker() as session:

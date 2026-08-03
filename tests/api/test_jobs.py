@@ -1,8 +1,9 @@
 import asyncio
-from uuid import uuid4
+import json
+from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from app.db.models import IdempotencyKey, Job
 from app.domain.schemas import JobStatus
@@ -69,6 +70,108 @@ async def test_idempotency_replay_returns_same_job_and_single_row():
             )
         assert job_count == 1
         assert key_count == 1
+    finally:
+        await app.aclose()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_foreign_keys_are_enforced_in_test_fixture():
+    """Guardrail for the FK-order regression tests below: if the test
+    engine ever stops enforcing FK constraints, a passing ``POST /jobs``
+    would no longer prove anything about insert order."""
+    app = await build_test_app()
+    try:
+        async with app.maker() as session:
+            enabled = await session.scalar(text("PRAGMA foreign_keys"))
+        assert enabled == 1
+    finally:
+        await app.aclose()
+
+
+@pytest.mark.asyncio
+async def test_create_job_succeeds_with_foreign_keys_enforced():
+    """Regression for creating the idempotency key row (which FKs to
+    ``jobs``) before the job row existed in the same transaction. With
+    SQLite ``PRAGMA foreign_keys=ON`` (matching Postgres's always-on FK
+    enforcement) that ordering bug raises ``IntegrityError`` on every
+    ``POST /jobs``; the job row must be added and flushed first."""
+    app = await build_test_app()
+    try:
+        response = await app.client.post(
+            "/jobs",
+            json={"prompt": "A courier crosses a flooded city."},
+            headers={
+                "Idempotency-Key": "key-fk-order",
+                "X-Tenant-Id": str(app.tenant_a),
+            },
+        )
+        assert response.status_code == 202
+        job_id = UUID(response.json()["job_id"])
+
+        async with app.maker() as session:
+            job = await session.get(Job, job_id)
+            key_row = await session.scalar(
+                select(IdempotencyKey).where(IdempotencyKey.job_id == job_id)
+            )
+        assert job is not None
+        assert key_row is not None
+        assert key_row.job_id == job_id
+    finally:
+        await app.aclose()
+
+
+@pytest.mark.asyncio
+async def test_redis_stale_mirror_after_job_deleted_does_not_fabricate_queued():
+    """Regression: Redis is a cache, not the source of truth. If the job a
+    mirrored idempotency key points at has been deleted from Postgres
+    (which cascades away its idempotency_keys row too), a replay must not
+    fabricate a fake QUEUED status for a job that no longer exists — it
+    should treat the mirror as stale and fall through to create a fresh
+    job.
+    """
+    app = await build_test_app()
+    try:
+        headers = {
+            "Idempotency-Key": "key-stale-mirror",
+            "X-Tenant-Id": str(app.tenant_a),
+        }
+        body = {"prompt": "A courier crosses a flooded city."}
+
+        first = await app.client.post("/jobs", json=body, headers=headers)
+        assert first.status_code == 202
+        old_job_id = UUID(first.json()["job_id"])
+
+        cache_key = f"idem:{app.tenant_a}:key-stale-mirror"
+        cached_before = await app.state.redis.get(cache_key)
+        assert cached_before is not None
+        assert json.loads(cached_before)["job_id"] == str(old_job_id)
+
+        async with app.maker() as session:
+            job = await session.get(Job, old_job_id)
+            await session.delete(job)
+            await session.commit()
+            # ON DELETE CASCADE should have taken the idempotency key with it.
+            remaining_keys = await session.scalar(
+                select(func.count()).select_from(IdempotencyKey)
+            )
+        assert remaining_keys == 0
+
+        second = await app.client.post("/jobs", json=body, headers=headers)
+        assert second.status_code == 202
+        new_job_id = UUID(second.json()["job_id"])
+        assert new_job_id != old_job_id
+        assert second.json()["status"] == JobStatus.QUEUED.value
+
+        cached_after = await app.state.redis.get(cache_key)
+        assert cached_after is not None
+        assert json.loads(cached_after)["job_id"] == str(new_job_id)
+
+        await _poll_until(
+            app,
+            new_job_id,
+            app.tenant_a,
+            statuses={JobStatus.BIBLE_LOCKED.value},
+        )
     finally:
         await app.aclose()
 

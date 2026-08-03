@@ -105,6 +105,67 @@ async def test_concurrent_resume_second_call_returns_409_job_locked():
 
 
 @pytest.mark.asyncio
+async def test_sweep_resumes_job_with_started_at_set_but_no_checkpoint():
+    """Regression for using ``started_at is None`` as the "needs initial
+    state" proxy.
+
+    A job can have ``started_at`` populated (the RUNNING transition was
+    persisted) yet crash before the graph's first node ever wrote a
+    checkpoint for its ``thread_id`` — e.g. the process died between
+    ``_mark_running``'s commit and ``graph.ainvoke`` completing its first
+    step. With the old ``started_at is None`` check this looks like "not
+    the first run" and resumes with ``initial_state=None`` against a
+    thread_id that has zero checkpoints, which raises LangGraph's
+    ``EmptyInputError`` and the job never runs. Detecting "no checkpoint
+    exists" directly must still drive it to completion.
+    """
+    app = await build_test_app()
+    try:
+        started_at = datetime.now(UTC)
+        job_id = await _insert_job(
+            app, app.tenant_a, status=JobStatus.RUNNING, started_at=started_at
+        )
+        # No graph.ainvoke has ever executed for this thread_id, so the
+        # MemorySaver checkpointer genuinely has no checkpoint for it —
+        # unlike test_startup_sweep_resumes_mid_graph_job_to_bible_locked,
+        # which seeds a real mid-graph checkpoint first.
+
+        await sweep_stale_jobs(app.state)
+
+        body = await _poll_until(
+            app, job_id, app.tenant_a, statuses={JobStatus.BIBLE_LOCKED.value}
+        )
+        assert body["story_plan"] is not None
+        assert body["continuity_bible"] is not None
+    finally:
+        await app.aclose()
+
+
+@pytest.mark.asyncio
+async def test_resume_endpoint_with_started_at_set_but_no_checkpoint():
+    """Same regression as above, through ``POST /jobs/{id}/resume`` instead
+    of the startup sweep, since it shares ``run_locked_job``."""
+    app = await build_test_app()
+    try:
+        started_at = datetime.now(UTC)
+        job_id = await _insert_job(
+            app, app.tenant_a, status=JobStatus.QUEUED, started_at=started_at
+        )
+
+        response = await app.client.post(
+            f"/jobs/{job_id}/resume", headers={"X-Tenant-Id": str(app.tenant_a)}
+        )
+        assert response.status_code == 202
+
+        body = await _poll_until(
+            app, job_id, app.tenant_a, statuses={JobStatus.BIBLE_LOCKED.value}
+        )
+        assert body["continuity_bible"] is not None
+    finally:
+        await app.aclose()
+
+
+@pytest.mark.asyncio
 async def test_startup_sweep_resumes_mid_graph_job_to_bible_locked():
     """Seeds a job stuck at RUNNING with a checkpoint after plan_story but
     before lock_continuity_bible, then proves the sweep picks it up and

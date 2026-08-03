@@ -14,6 +14,19 @@ class Settings(BaseSettings):
         "postgresql+asyncpg://postgres:postgres@localhost:5432/video_agent"
     )
 
+    # DSN used only by the startup sweep (finds non-terminal jobs across all
+    # tenants). Every tenant table has FORCE ROW LEVEL SECURITY, so the
+    # normal ``database_url`` role — even unprivileged, tenant-context-free —
+    # sees zero rows there; RLS applies to every role, including the table
+    # owner, once FORCE is set. The sweep therefore needs to connect as a
+    # role with BYPASSRLS (or via ``SET ROLE`` to one), on a role dedicated
+    # to the sweep rather than the general per-request role. If unset, this
+    # falls back to ``database_url`` — fine for local/dev/tests (SQLite has
+    # no RLS; a Postgres dev role with BYPASSRLS also works) but in
+    # production this must point at a distinct, privileged DSN or the sweep
+    # will silently see nothing to resume.
+    database_url_sweep: str | None = None
+
     redis_url: str = "redis://localhost:6379/0"
 
     langfuse_public_key: str = ""
@@ -34,3 +47,14 @@ class Settings(BaseSettings):
 
     feature_story_planning: bool = True
     idempotency_ttl_seconds: int = 86400
+
+    def database_url_for_sweep(self) -> str:
+        """DSN the startup sweep should connect with.
+
+        Falls back to ``database_url`` when ``database_url_sweep`` is unset
+        — correct for dev/tests (SQLite has no RLS), but production must
+        set ``DATABASE_URL_SWEEP`` to a role with ``BYPASSRLS`` or the sweep
+        will silently see no non-terminal jobs under FORCE ROW LEVEL
+        SECURITY.
+        """
+        return self.database_url_sweep or self.database_url

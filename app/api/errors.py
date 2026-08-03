@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -22,6 +23,20 @@ def register_exception_handlers(app: FastAPI) -> None:
         )
         return JSONResponse(
             status_code=exc.http_status,
+            content=body.model_dump(),
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(
+        _request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        body = ErrorBody(
+            code="REQUEST_VALIDATION_FAILED",
+            message=str(exc),
+            trace_id=resolve_trace_id(),
+        )
+        return JSONResponse(
+            status_code=422,
             content=body.model_dump(),
         )
 

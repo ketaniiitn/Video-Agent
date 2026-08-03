@@ -15,6 +15,7 @@ from uuid import uuid4
 import fakeredis.aioredis
 from httpx import ASGITransport, AsyncClient
 from langgraph.checkpoint.memory import MemorySaver
+from sqlalchemy import event
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.ext.compiler import compiles
@@ -55,6 +56,17 @@ def _compile_jsonb_for_sqlite(_type, _compiler, **_kwargs):
 
 async def make_db_maker() -> async_sessionmaker[AsyncSession]:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
+
+    # SQLite ignores FK constraints by default; Postgres always enforces
+    # them. Turning this on is what makes the FK-ordering bug on
+    # ``POST /jobs`` (idempotency key flushed before its job existed)
+    # reproducible against these tests instead of only in production.
+    @event.listens_for(engine.sync_engine, "connect")
+    def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
     return async_sessionmaker(engine, expire_on_commit=False)

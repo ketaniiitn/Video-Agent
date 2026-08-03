@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.config import Settings
-from app.db.models import IdempotencyKey
+from app.db.models import IdempotencyKey, Job
 from app.domain.errors import AppError
 from app.domain.schemas import BudgetCaps
 
@@ -91,6 +91,18 @@ async def persist_idempotency_key(
     return "created"
 
 
+async def _cached_job_still_exists(session, tenant_id: UUID, job_id: UUID) -> bool:
+    """Postgres is the source of truth; Redis only mirrors it.
+
+    A cached mapping can outlive the job it points at (e.g. the job row was
+    deleted after the mirror was written, or the mirror was written by a
+    process that later rolled back). Treat that as a stale cache entry, not
+    as a valid replay.
+    """
+    job = await session.get(Job, job_id)
+    return job is not None and job.tenant_id == tenant_id
+
+
 async def resolve_idempotency(
     session,
     redis,
@@ -98,18 +110,38 @@ async def resolve_idempotency(
     key: str,
     request_hash: str,
     job_id: UUID,
+    job: Job | None = None,
 ) -> IdempotencyOutcome:
     """Resolve or persist an idempotency key without writing Redis.
+
+    ``job`` is the not-yet-persisted ``Job`` row for a fresh creation
+    attempt. When provided, it is added to ``session`` and flushed *before*
+    the idempotency key row (which has a foreign key to it) is flushed, all
+    inside one SAVEPOINT — so either both rows land together, or a
+    conflicting idempotency key rolls both back together and this falls
+    back to the existing row. Callers that only need to resolve/lookup
+    (no candidate job to create) may omit it.
 
     After this returns, the caller must commit the PostgreSQL transaction before
     calling ``mirror_idempotency_to_redis``.
     """
     cached = await redis.get(_redis_key(tenant_id, key))
     if cached is not None:
-        return _cached_outcome(cached, request_hash)
+        outcome = _cached_outcome(cached, request_hash)
+        if job is None or await _cached_job_still_exists(session, tenant_id, outcome.job_id):
+            return outcome
+        # Stale mirror: drop it and fall through to the Postgres-authoritative
+        # path below instead of replaying a job that no longer exists.
+        await redis.delete(_redis_key(tenant_id, key))
 
     try:
-        await persist_idempotency_key(session, tenant_id, key, request_hash, job_id)
+        if job is not None:
+            async with session.begin_nested():
+                session.add(job)
+                await session.flush()
+                await persist_idempotency_key(session, tenant_id, key, request_hash, job_id)
+        else:
+            await persist_idempotency_key(session, tenant_id, key, request_hash, job_id)
     except IntegrityError:
         existing = await session.scalar(
             select(IdempotencyKey).where(

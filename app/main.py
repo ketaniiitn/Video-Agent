@@ -34,6 +34,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         stack.push_async_callback(engine.dispose)
         sessionmaker = get_sessionmaker(engine)
 
+        # The sweep needs a role that can see across tenants despite FORCE
+        # RLS (BYPASSRLS, or SET ROLE to one) — a distinct DSN/pool from the
+        # per-request engine above, never the general per-request role. See
+        # ``Settings.database_url_for_sweep``. Falls back to the same
+        # DSN/engine when unset (dev/tests; a Postgres dev superuser also
+        # bypasses RLS).
+        sweep_database_url = settings.database_url_for_sweep()
+        if sweep_database_url != settings.database_url:
+            sweep_engine = create_engine_from_settings(
+                settings.model_copy(update={"database_url": sweep_database_url})
+            )
+            stack.push_async_callback(sweep_engine.dispose)
+            sweep_sessionmaker = get_sessionmaker(sweep_engine)
+        else:
+            sweep_sessionmaker = sessionmaker
+
         redis = redis_asyncio.from_url(settings.redis_url)
         stack.push_async_callback(redis.aclose)
 
@@ -49,7 +65,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             settings=settings,
             redis=redis,
             session_factory=session_factory,
-            sweep_session_factory=partial(get_raw_session, sessionmaker=sessionmaker),
+            sweep_session_factory=partial(
+                get_raw_session, sessionmaker=sweep_sessionmaker
+            ),
             graph=graph,
             gateway=gateway,
         )
