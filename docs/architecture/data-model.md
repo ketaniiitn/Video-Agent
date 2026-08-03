@@ -2,6 +2,8 @@
 
 Postgres 16 is the system of record. Migration `001_m1_initial` owns the complete
 M1 application schema and the LangGraph checkpoint schema.
+`002_expand_tenant_aware_job_fks` adds tenant-aware job references without
+removing the original constraints.
 
 ## M1 application tables
 
@@ -18,7 +20,10 @@ M1 application schema and the LangGraph checkpoint schema.
   `created_at`, `expires_at`. `(tenant_id, key)` is unique, making durable
   work creation idempotent per tenant.
 
-Foreign keys from tenant data use `ON DELETE CASCADE`. Story plans and
+Foreign keys from tenant data use `ON DELETE CASCADE`. Jobs expose unique
+`(id, tenant_id)` reference columns. Story plans, continuity bibles, and
+idempotency keys reference jobs through `(job_id, tenant_id)`, preventing a
+tenant-owned row from pointing at another tenant's job. Story plans and
 continuity bibles are one-to-one with jobs.
 
 ## Checkpoint tables
@@ -42,6 +47,8 @@ Its policy uses:
 USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
 ```
 
+PostgreSQL applies the same expression as `WITH CHECK` when it is omitted, so
+cross-tenant writes are rejected as well as cross-tenant reads.
 Application transactions set `app.tenant_id` locally before accessing tenant
 data. A missing setting exposes no tenant rows.
 

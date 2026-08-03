@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     Numeric,
     String,
@@ -37,6 +38,9 @@ class Tenant(Base):
 
 class Job(Base):
     __tablename__ = "jobs"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id", name="uq_jobs_id_tenant_id"),
+    )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     tenant_id: Mapped[UUID] = mapped_column(
@@ -77,6 +81,14 @@ class Job(Base):
 
 class StoryPlanRow(Base):
     __tablename__ = "story_plans"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["job_id", "tenant_id"],
+            ["jobs.id", "jobs.tenant_id"],
+            name="fk_story_plans_job_tenant",
+            ondelete="CASCADE",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     tenant_id: Mapped[UUID] = mapped_column(
@@ -99,6 +111,14 @@ class StoryPlanRow(Base):
 
 class ContinuityBibleRow(Base):
     __tablename__ = "continuity_bibles"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["job_id", "tenant_id"],
+            ["jobs.id", "jobs.tenant_id"],
+            name="fk_continuity_bibles_job_tenant",
+            ondelete="CASCADE",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     tenant_id: Mapped[UUID] = mapped_column(
@@ -124,6 +144,12 @@ class IdempotencyKey(Base):
     __tablename__ = "idempotency_keys"
     __table_args__ = (
         UniqueConstraint("tenant_id", "key", name="uq_idempotency_keys_tenant_key"),
+        ForeignKeyConstraint(
+            ["job_id", "tenant_id"],
+            ["jobs.id", "jobs.tenant_id"],
+            name="fk_idempotency_keys_job_tenant",
+            ondelete="CASCADE",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)

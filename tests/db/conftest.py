@@ -55,5 +55,6 @@ async def db_engine():
         await engine.dispose()
         if role_name is not None:
             async with admin_engine.begin() as connection:
+                await connection.execute(text(f'DROP OWNED BY "{role_name}"'))
                 await connection.execute(text(f'DROP ROLE "{role_name}"'))
         await admin_engine.dispose()
