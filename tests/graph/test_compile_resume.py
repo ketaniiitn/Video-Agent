@@ -33,13 +33,13 @@ VALID_BIBLE = {
 
 
 class SchemaCountingGateway(FakeGateway):
-    def __init__(self):
+    def __init__(self, *, usage=Usage(usd=0.01, tokens=10)):
         super().__init__(
             responses={
                 "story_plan": VALID_PLAN,
                 "continuity_bible": {"nope": True},
             },
-            usage=Usage(usd=0.01, tokens=10),
+            usage=usage,
         )
         self.calls = {"story_plan": 0, "continuity_bible": 0}
 
@@ -49,8 +49,8 @@ class SchemaCountingGateway(FakeGateway):
         return await super().complete_json(alias, messages, schema_name)
 
 
-def make_state(tenant_id, job_id):
-    return {
+def make_state(tenant_id, job_id, **overrides):
+    state = {
         "job_id": str(job_id),
         "tenant_id": str(tenant_id),
         "prompt": "A courier crosses a flooded city.",
@@ -63,6 +63,8 @@ def make_state(tenant_id, job_id):
         "started_at_iso": datetime.now(timezone.utc).isoformat(),
         "budget_max_wall_clock_seconds": 600,
     }
+    state.update(overrides)
+    return state
 
 
 @pytest.mark.asyncio
@@ -111,3 +113,32 @@ async def test_resume_continues_after_committed_story_plan(node_db):
     assert gateway.calls["story_plan"] == 1
     assert bible is not None and bible.locked_at is not None
     assert job.status == JobStatus.BIBLE_LOCKED
+
+
+@pytest.mark.asyncio
+async def test_next_node_reloads_usage_and_stops_at_tiny_usd_cap(node_db):
+    maker, session_factory, tenant_id, job_id = node_db
+    gateway = SchemaCountingGateway()
+    graph = await build_graph(
+        MemorySaver(),
+        gateway=gateway,
+        session_factory=session_factory,
+    )
+    config = {
+        "configurable": {
+            "thread_id": str(job_id),
+            "tenant_id": str(tenant_id),
+        }
+    }
+
+    result = await graph.ainvoke(
+        make_state(tenant_id, job_id, budget_max_usd=0.01),
+        config,
+    )
+
+    async with maker() as session:
+        job = await session.get(Job, job_id)
+    assert result["outcome"] == "PARTIAL"
+    assert result["budget_used_usd"] == pytest.approx(0.01)
+    assert gateway.calls == {"story_plan": 1, "continuity_bible": 0}
+    assert job.status == JobStatus.PARTIAL

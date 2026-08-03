@@ -4,13 +4,15 @@ from decimal import Decimal
 from uuid import UUID
 
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Job, StoryPlanRow
 from app.domain.errors import AppError
 from app.domain.schemas import JobStatus, StoryPlan
-from app.gateway.protocols import GatewayClient
+from app.gateway.protocols import GatewayClient, Usage
 from app.graph.budgets import BudgetExceeded, check_budget
 from app.graph.state import VideoAgentState
 from app.prompts.registry import get_prompt
@@ -27,13 +29,15 @@ async def plan_story_node(
 ) -> dict:
     tenant_id = UUID(state["tenant_id"])
     job_id = UUID(state["job_id"])
-    try:
-        check_budget(state)
-    except BudgetExceeded:
-        await _set_job_status(
-            session_factory, tenant_id, job_id, JobStatus.PARTIAL
-        )
-        return {"outcome": "PARTIAL"}
+    budget_state = {
+        **state,
+        **await _load_budget(session_factory, tenant_id, job_id),
+    }
+    partial = await _stop_if_budget_exhausted(
+        budget_state, session_factory, tenant_id, job_id
+    )
+    if partial is not None:
+        return partial
 
     existing = await _load_existing(session_factory, tenant_id, job_id)
     if existing is not None:
@@ -45,16 +49,17 @@ async def plan_story_node(
 
     messages = get_prompt("story_plan", 1).render({"premise": state["prompt"]})
     plan: StoryPlan | None = None
-    total_usd = Decimal("0")
-    total_tokens = 0
-    gateway_calls = 0
     for _attempt in range(_SCHEMA_ATTEMPTS):
+        partial = await _stop_if_budget_exhausted(
+            budget_state, session_factory, tenant_id, job_id
+        )
+        if partial is not None:
+            return partial
         payload, usage = await gateway.complete_json(
             "reasoning-high", messages, schema_name="story_plan"
         )
-        total_usd += Decimal(str(usage.usd))
-        total_tokens += usage.tokens
-        gateway_calls += 1
+        _apply_usage(budget_state, usage)
+        await _persist_usage(session_factory, tenant_id, job_id, usage)
         try:
             plan = StoryPlan.model_validate(payload)
             break
@@ -62,13 +67,8 @@ async def plan_story_node(
             continue
 
     if plan is None:
-        await _fail_job(
-            session_factory,
-            tenant_id,
-            job_id,
-            total_usd,
-            total_tokens,
-            gateway_calls,
+        await _set_job_status(
+            session_factory, tenant_id, job_id, JobStatus.FAILED
         )
         raise AppError(
             "SCHEMA_INVALID",
@@ -81,30 +81,18 @@ async def plan_story_node(
         if job is None or job.tenant_id != tenant_id:
             raise AppError("JOB_NOT_FOUND", "Job was not found", http_status=404)
 
-        row = await session.scalar(
-            select(StoryPlanRow).where(
-                StoryPlanRow.job_id == job_id,
-                StoryPlanRow.tenant_id == tenant_id,
+        await session.execute(
+            _story_plan_upsert(
+                session,
+                tenant_id=tenant_id,
+                job_id=job_id,
+                beats_json=plan.model_dump(mode="json"),
             )
         )
-        if row is None:
-            session.add(
-                StoryPlanRow(
-                    tenant_id=tenant_id,
-                    job_id=job_id,
-                    beats_json=plan.model_dump(mode="json"),
-                )
-            )
-        else:
-            row.beats_json = plan.model_dump(mode="json")
-
-        job.budget_used_usd += total_usd
-        job.budget_used_tokens += total_tokens
-        job.budget_used_iterations += gateway_calls
         await session.commit()
         return {
             "story_plan": plan.model_dump(mode="json"),
-            **_budget_delta(job),
+            **_budget_delta(budget_state),
         }
 
 
@@ -140,28 +128,107 @@ async def _set_job_status(
         await session.commit()
 
 
-async def _fail_job(
+async def _load_budget(
     session_factory: SessionFactory,
     tenant_id: UUID,
     job_id: UUID,
-    used_usd: Decimal,
-    used_tokens: int,
-    used_iterations: int,
-) -> None:
+) -> dict:
     async with session_factory(tenant_id) as session:
         job = await session.get(Job, job_id)
         if job is None or job.tenant_id != tenant_id:
             raise AppError("JOB_NOT_FOUND", "Job was not found", http_status=404)
-        job.status = JobStatus.FAILED
-        job.budget_used_usd += used_usd
-        job.budget_used_tokens += used_tokens
-        job.budget_used_iterations += used_iterations
+        return _budget_delta(job)
+
+
+async def _persist_usage(
+    session_factory: SessionFactory,
+    tenant_id: UUID,
+    job_id: UUID,
+    usage: Usage,
+) -> None:
+    async with session_factory(tenant_id) as session:
+        result = await session.execute(
+            update(Job)
+            .where(Job.id == job_id, Job.tenant_id == tenant_id)
+            .values(
+                budget_used_usd=Job.budget_used_usd
+                + Decimal(str(usage.usd)),
+                budget_used_tokens=Job.budget_used_tokens + usage.tokens,
+                budget_used_iterations=Job.budget_used_iterations + 1,
+            )
+        )
+        if result.rowcount != 1:
+            raise AppError("JOB_NOT_FOUND", "Job was not found", http_status=404)
         await session.commit()
 
 
-def _budget_delta(job: Job) -> dict:
+async def _stop_if_budget_exhausted(
+    state: dict,
+    session_factory: SessionFactory,
+    tenant_id: UUID,
+    job_id: UUID,
+) -> dict | None:
+    try:
+        check_budget(state)
+    except BudgetExceeded:
+        await _set_job_status(
+            session_factory, tenant_id, job_id, JobStatus.PARTIAL
+        )
+        return {"outcome": "PARTIAL", **_budget_delta(state)}
+    return None
+
+
+def _apply_usage(state: dict, usage: Usage) -> None:
+    state["budget_used_usd"] = float(
+        Decimal(str(state["budget_used_usd"])) + Decimal(str(usage.usd))
+    )
+    state["budget_used_tokens"] += usage.tokens
+    state["budget_used_iterations"] += 1
+
+
+def _story_plan_upsert(
+    session: AsyncSession,
+    *,
+    tenant_id: UUID,
+    job_id: UUID,
+    beats_json: dict,
+):
+    dialect_name = session.get_bind().dialect.name
+    insert = (
+        postgresql_insert
+        if dialect_name == "postgresql"
+        else sqlite_insert
+        if dialect_name == "sqlite"
+        else None
+    )
+    if insert is None:
+        raise RuntimeError(f"Unsupported database dialect: {dialect_name}")
+    statement = insert(StoryPlanRow).values(
+        tenant_id=tenant_id,
+        job_id=job_id,
+        beats_json=beats_json,
+    )
+    return statement.on_conflict_do_update(
+        index_elements=[StoryPlanRow.job_id],
+        set_={"beats_json": statement.excluded.beats_json},
+    )
+
+
+def _budget_delta(source: Job | dict) -> dict:
     return {
-        "budget_used_usd": float(job.budget_used_usd),
-        "budget_used_tokens": job.budget_used_tokens,
-        "budget_used_iterations": job.budget_used_iterations,
+        "budget_used_usd": float(
+            source.budget_used_usd
+            if isinstance(source, Job)
+            else source["budget_used_usd"]
+        ),
+        "budget_used_tokens": (
+            source.budget_used_tokens
+            if isinstance(source, Job)
+            else source["budget_used_tokens"]
+        ),
+        "budget_used_iterations": (
+            source.budget_used_iterations
+            if isinstance(source, Job)
+            else source["budget_used_iterations"]
+        ),
     }

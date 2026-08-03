@@ -1,13 +1,14 @@
 from datetime import datetime, timezone
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 
 from app.db.models import Job, StoryPlanRow
 from app.domain.errors import AppError
 from app.domain.schemas import JobStatus
 from app.gateway.client import FakeGateway, Usage
 from app.nodes.plan_story import plan_story_node
+import app.nodes.plan_story as plan_story_module
 
 
 VALID_PLAN = {
@@ -77,18 +78,93 @@ async def test_plan_story_persists_idempotently(node_db):
 
 
 @pytest.mark.asyncio
+async def test_plan_story_upsert_handles_conflict_without_duplicate(
+    node_db, monkeypatch
+):
+    maker, session_factory, tenant_id, job_id = node_db
+    gateway = CountingGateway({"story_plan": VALID_PLAN})
+    state = make_state(tenant_id, job_id)
+    monkeypatch.setattr(plan_story_module, "_load_existing", _always_missing)
+    statements = []
+    event.listen(
+        maker.kw["bind"].sync_engine,
+        "before_cursor_execute",
+        lambda _conn, _cursor, statement, _parameters, _context, _many: (
+            statements.append(statement)
+        ),
+    )
+
+    await plan_story_node(
+        state, gateway=gateway, session_factory=session_factory
+    )
+    await plan_story_node(
+        state, gateway=gateway, session_factory=session_factory
+    )
+
+    async with maker() as session:
+        count = await session.scalar(select(func.count()).select_from(StoryPlanRow))
+    assert count == 1
+    assert gateway.call_count == 2
+    assert any("ON CONFLICT" in statement for statement in statements)
+
+
+@pytest.mark.asyncio
 async def test_plan_story_budget_exhaustion_is_partial_without_gateway_call(node_db):
     _, session_factory, tenant_id, job_id = node_db
     gateway = CountingGateway({"story_plan": VALID_PLAN})
 
     result = await plan_story_node(
-        make_state(tenant_id, job_id, budget_used_usd=1.0),
+        make_state(tenant_id, job_id, budget_max_usd=0.0),
         gateway=gateway,
         session_factory=session_factory,
     )
 
-    assert result == {"outcome": "PARTIAL"}
+    assert result["outcome"] == "PARTIAL"
+    assert result["budget_used_usd"] == pytest.approx(0.0)
     assert gateway.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_plan_story_reloads_persisted_budget_before_gateway_call(node_db):
+    maker, session_factory, tenant_id, job_id = node_db
+    gateway = CountingGateway({"story_plan": VALID_PLAN})
+    async with maker() as session:
+        job = await session.get(Job, job_id)
+        job.budget_used_usd = 1
+        await session.commit()
+
+    result = await plan_story_node(
+        make_state(tenant_id, job_id),
+        gateway=gateway,
+        session_factory=session_factory,
+    )
+
+    assert result["outcome"] == "PARTIAL"
+    assert result["budget_used_usd"] == pytest.approx(1.0)
+    assert gateway.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_plan_story_stops_schema_retries_when_usage_reaches_cap(node_db):
+    maker, session_factory, tenant_id, job_id = node_db
+    gateway = CountingGateway(
+        {"story_plan": {"nope": True}},
+        usage=Usage(usd=0.01, tokens=10),
+    )
+
+    result = await plan_story_node(
+        make_state(tenant_id, job_id, budget_max_usd=0.01),
+        gateway=gateway,
+        session_factory=session_factory,
+    )
+
+    async with maker() as session:
+        job = await session.get(Job, job_id)
+    assert result["outcome"] == "PARTIAL"
+    assert result["budget_used_usd"] == pytest.approx(0.01)
+    assert gateway.call_count == 1
+    assert job.status == JobStatus.PARTIAL
+    assert float(job.budget_used_usd) == pytest.approx(0.01)
 
 
 @pytest.mark.asyncio
@@ -111,3 +187,7 @@ async def test_invalid_story_schema_retries_then_fails_job(node_db):
     assert float(job.budget_used_usd) == pytest.approx(0.15)
     assert job.budget_used_tokens == 300
     assert job.budget_used_iterations == 3
+
+
+async def _always_missing(*_args, **_kwargs):
+    return None
