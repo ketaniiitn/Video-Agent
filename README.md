@@ -27,9 +27,14 @@ PROJECT_MEMORY.md  Durable facts worth not re-explaining every session
 
 ## Status
 
-Greenfield — no application code yet. The Cursor workspace (rules, docs, ADRs, prompts) is
-intentionally built first, so the first real implementation prompt already inherits full
-context. See `docs/workflows/planning-workflow.md` for how to start the first feature.
+**M1 implemented** — FastAPI job lifecycle, 2-node LangGraph (`plan_story` →
+`lock_continuity_bible`), Postgres checkpointing with tenant RLS, idempotent job creation,
+and gateway-backed planning ending at API status `BIBLE_LOCKED`. Shot generation, QC,
+assemble, and deliver are not wired yet.
+
+Spec: `docs/superpowers/specs/2026-08-03-m1-job-lifecycle-design.md` · Plan:
+`docs/superpowers/plans/2026-08-03-m1-job-lifecycle.md` · Schema:
+`docs/architecture/data-model.md`
 
 ## Stack (see `docs/architecture/platform-spec-summary.md` for full detail)
 

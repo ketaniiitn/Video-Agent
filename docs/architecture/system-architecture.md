@@ -1,10 +1,24 @@
-# System Architecture (proposed)
+# System Architecture
 
-This is a proposed LangGraph topology consistent with the PRD's 6 stages and the platform's
+Target LangGraph topology consistent with the PRD's 6 stages and the platform's
 checkpoint-per-node rule. Update this file whenever the graph topology actually changes —
 it's the map Claude (and you) should trust over re-deriving it from code each time.
 
-## Graph topology (text form)
+## M1 implemented subgraph
+
+As of M1 (`app/graph/compile.py`), only the planning slice is wired:
+
+```
+plan_story → lock_continuity_bible → END
+```
+
+- Both nodes checkpoint; the runner maps harness `SUCCESS` → API status `BIBLE_LOCKED`.
+- `generate_shot` through `deliver` below are **not yet implemented** — the compiled graph
+  ends at `lock_continuity_bible`.
+- See `docs/superpowers/specs/2026-08-03-m1-job-lifecycle-design.md` and
+  `docs/superpowers/plans/2026-08-03-m1-job-lifecycle.md` for the shipped M1 scope.
+
+## Full graph topology (text form)
 
 ```
 plan_story
@@ -31,8 +45,6 @@ plan_story
 
 ## Open questions
 
-- Exact checkpointer backend for LangGraph (Postgres-backed, per ADR-0003) — schema TBD,
-  see `data-model.md`.
 - Whether `qc_score` and `repair_shot` are separate nodes or a single node with internal
   branching — lean separate, since checkpoint-per-node implies repair should be resumable
   independently of the QC call that triggered it.

@@ -11,9 +11,12 @@ policies against an empty `app.tenant_id` setting on pooled connections.
 - `tenants`: `id`, `name`, `created_at`. This is the tenant identity root and is
   accessed only by privileged provisioning code; it does not contain a `tenant_id`.
 - `jobs`: `id`, `tenant_id`, `status`, `prompt`, `trace_id`, `created_at`,
-  `updated_at`, nullable `started_at`, all four `budget_max_*` fields, and
+  `updated_at`, nullable `started_at`, four `budget_max_*` caps
+  (`usd`, `tokens`, `iterations`, `wall_clock_seconds`), and
   `budget_used_usd`, `budget_used_tokens`, and `budget_used_iterations`.
-  `status` is the native `job_status` enum containing all harness outcomes.
+  `status` is the native `job_status` enum:
+  `QUEUED`, `RUNNING`, `BIBLE_LOCKED`, `PARTIAL`, `FAILED`,
+  `FAILED_NO_PROGRESS`, `ESCALATED`.
 - `story_plans`: `id`, `tenant_id`, unique `job_id`, `beats_json`, `created_at`.
 - `continuity_bibles`: `id`, `tenant_id`, unique `job_id`, `bible_json`,
   nullable `locked_at`, `created_at`.
