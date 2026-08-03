@@ -78,6 +78,35 @@ async def test_plan_story_persists_idempotently(node_db):
 
 
 @pytest.mark.asyncio
+async def test_plan_story_commits_artifact_and_usage_once(node_db):
+    maker, session_factory, tenant_id, job_id = node_db
+    gateway = CountingGateway({"story_plan": VALID_PLAN})
+    commits = []
+    event.listen(
+        maker.kw["bind"].sync_engine,
+        "commit",
+        lambda _connection: commits.append(None),
+    )
+
+    await plan_story_node(
+        make_state(tenant_id, job_id),
+        gateway=gateway,
+        session_factory=session_factory,
+    )
+
+    async with maker() as session:
+        plan = await session.scalar(
+            select(StoryPlanRow).where(StoryPlanRow.job_id == job_id)
+        )
+        job = await session.get(Job, job_id)
+    assert len(commits) == 1
+    assert plan is not None
+    assert float(job.budget_used_usd) == pytest.approx(0.05)
+    assert job.budget_used_tokens == 100
+    assert job.budget_used_iterations == 1
+
+
+@pytest.mark.asyncio
 async def test_plan_story_upsert_handles_conflict_without_duplicate(
     node_db, monkeypatch
 ):

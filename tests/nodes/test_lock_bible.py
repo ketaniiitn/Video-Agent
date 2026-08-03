@@ -93,6 +93,35 @@ async def test_lock_sets_locked_at_and_job_status(node_db):
 
 
 @pytest.mark.asyncio
+async def test_lock_bible_commits_artifact_and_usage_once(node_db):
+    maker, session_factory, tenant_id, job_id = node_db
+    gateway = CountingGateway({"continuity_bible": VALID_BIBLE})
+    commits = []
+    event.listen(
+        maker.kw["bind"].sync_engine,
+        "commit",
+        lambda _connection: commits.append(None),
+    )
+
+    await lock_continuity_bible_node(
+        make_state(tenant_id, job_id),
+        gateway=gateway,
+        session_factory=session_factory,
+    )
+
+    async with maker() as session:
+        bible = await session.scalar(
+            select(ContinuityBibleRow).where(ContinuityBibleRow.job_id == job_id)
+        )
+        job = await session.get(Job, job_id)
+    assert len(commits) == 1
+    assert bible is not None
+    assert float(job.budget_used_usd) == pytest.approx(0.03)
+    assert job.budget_used_tokens == 80
+    assert job.budget_used_iterations == 1
+
+
+@pytest.mark.asyncio
 async def test_lock_bible_upsert_handles_conflict_without_duplicate(
     node_db, monkeypatch
 ):

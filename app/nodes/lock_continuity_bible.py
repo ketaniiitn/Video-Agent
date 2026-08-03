@@ -54,6 +54,7 @@ async def lock_continuity_bible_node(
         {"story_plan": json.dumps(state["story_plan"], sort_keys=True)}
     )
     bible: ContinuityBible | None = None
+    successful_usage: Usage | None = None
     for _attempt in range(_SCHEMA_ATTEMPTS):
         partial = await _stop_if_budget_exhausted(
             budget_state, session_factory, tenant_id, job_id
@@ -64,14 +65,15 @@ async def lock_continuity_bible_node(
             "reasoning-high", messages, schema_name="continuity_bible"
         )
         _apply_usage(budget_state, usage)
-        await _persist_usage(session_factory, tenant_id, job_id, usage)
         try:
             bible = ContinuityBible.model_validate(payload)
+            successful_usage = usage
             break
         except ValidationError:
+            await _persist_usage(session_factory, tenant_id, job_id, usage)
             continue
 
-    if bible is None:
+    if bible is None or successful_usage is None:
         await _set_job_status(
             session_factory, tenant_id, job_id, JobStatus.FAILED
         )
@@ -87,6 +89,7 @@ async def lock_continuity_bible_node(
             raise AppError("JOB_NOT_FOUND", "Job was not found", http_status=404)
 
         locked_at = datetime.now(timezone.utc)
+        await _increment_usage(session, tenant_id, job_id, successful_usage)
         await session.execute(
             _continuity_bible_upsert(
                 session,
@@ -156,19 +159,27 @@ async def _persist_usage(
     usage: Usage,
 ) -> None:
     async with session_factory(tenant_id) as session:
-        result = await session.execute(
-            update(Job)
-            .where(Job.id == job_id, Job.tenant_id == tenant_id)
-            .values(
-                budget_used_usd=Job.budget_used_usd
-                + Decimal(str(usage.usd)),
-                budget_used_tokens=Job.budget_used_tokens + usage.tokens,
-                budget_used_iterations=Job.budget_used_iterations + 1,
-            )
-        )
-        if result.rowcount != 1:
-            raise AppError("JOB_NOT_FOUND", "Job was not found", http_status=404)
+        await _increment_usage(session, tenant_id, job_id, usage)
         await session.commit()
+
+
+async def _increment_usage(
+    session: AsyncSession,
+    tenant_id: UUID,
+    job_id: UUID,
+    usage: Usage,
+) -> None:
+    result = await session.execute(
+        update(Job)
+        .where(Job.id == job_id, Job.tenant_id == tenant_id)
+        .values(
+            budget_used_usd=Job.budget_used_usd + Decimal(str(usage.usd)),
+            budget_used_tokens=Job.budget_used_tokens + usage.tokens,
+            budget_used_iterations=Job.budget_used_iterations + 1,
+        )
+    )
+    if result.rowcount != 1:
+        raise AppError("JOB_NOT_FOUND", "Job was not found", http_status=404)
 
 
 async def _stop_if_budget_exhausted(
