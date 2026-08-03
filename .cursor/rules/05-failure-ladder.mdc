@@ -1,0 +1,50 @@
+---
+description: Failure ladder for gateway model calls and provider calls — retry through fail honestly
+alwaysApply: true
+---
+
+# Failure ladder
+
+Every external call through `app/gateway/**` (LiteLLM model aliases) and
+`app/providers/**` (video generation providers) must follow this ladder in order.
+Do not skip rungs or reorder them. Provider capability negotiation stays in
+`.cursor/rules/14-provider-abstraction-mcp.mdc` — this rule covers resilience only.
+
+## Rung 1 — Retry
+
+- Exponential backoff with jitter.
+- Retryable errors only (transient HTTP 5xx, timeouts, rate limits).
+- Max **3** attempts per call.
+
+## Rung 2 — Fallback
+
+- Switch to an alternate model or provider **within the same alias / capability group**.
+- Never fall back to a different alias without explicit config.
+
+## Rung 3 — Circuit break
+
+- Per dependency (gateway alias or provider id).
+- Opens after **5 failures in 30 seconds**.
+- Half-open probe before closing.
+
+## Rung 4 — Degrade
+
+- Return cached, stale, or partial result when available.
+- Always flag the response as degraded (`PARTIAL` or equivalent metadata).
+- Never silently pass degraded output as fully successful.
+
+## Rung 5 — Fail honestly
+
+- Raise a typed `AppError` with a **stable error code**.
+- Message states what failed, what was preserved, and what to do next.
+- Every error response carries the run's **`trace_id`**.
+
+## Scope
+
+| Path | Applies |
+|---|---|
+| `app/gateway/**` | All LiteLLM proxy calls (logical aliases only — never provider names in code) |
+| `app/providers/**` | All video-generation provider calls behind the abstraction |
+
+Folder-scoped rules (`10`–`18`) do not cover the gateway folder; this always-applied
+rule fills that gap so model-call resilience is never missed.

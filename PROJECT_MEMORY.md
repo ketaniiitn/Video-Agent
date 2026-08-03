@@ -37,6 +37,9 @@ condensed specs, and the two source PDFs (`Guidelines.pdf`, `Video-Agent.pdf`, b
 - Scope is Video Agent only for now; Sales Agent and SQL Agent share the platform layer but
   aren't part of this repo.
 - ADR-0005 deliberately defers vector storage — don't add pgvector/Mongo Atlas speculatively.
+- M1 prompt registry is a local name+version fallback in `app/prompts/registry.py`
+  when Langfuse credentials are unset — deliberate interim vs `18-prompt-engineering.mdc`.
+  Switch when `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are configured.
 
 ## Update this file when
 
