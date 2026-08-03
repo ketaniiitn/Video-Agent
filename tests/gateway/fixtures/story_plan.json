@@ -1,0 +1,28 @@
+{
+  "beats": [
+    {
+      "name": "setup",
+      "duration_seconds": 10,
+      "action": "A traveler discovers a sealed observatory.",
+      "camera": "wide establishing shot"
+    },
+    {
+      "name": "development",
+      "duration_seconds": 10,
+      "action": "The traveler enters and restores the dormant mechanism.",
+      "camera": "medium tracking shot"
+    },
+    {
+      "name": "turn",
+      "duration_seconds": 10,
+      "action": "The mechanism reveals a hidden map among the stars.",
+      "camera": "close orbiting shot"
+    },
+    {
+      "name": "resolution",
+      "duration_seconds": 10,
+      "action": "The traveler watches a new route illuminate on the horizon.",
+      "camera": "wide pullback shot"
+    }
+  ]
+}
