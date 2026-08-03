@@ -1,0 +1,24 @@
+---
+description: The agent harness loop and its termination states — the model is a component inside it, never the controller
+alwaysApply: true
+---
+
+# Harness loop & termination
+
+Every agent run follows: `observe → think → act → evaluate → repeat | terminate | escalate`.
+The harness owns context, tools, budgets, and termination — the model proposes, the harness
+decides whether to continue.
+
+Terminal states (use these exact names in code — enums, log fields, API responses):
+
+| Condition | Outcome |
+|---|---|
+| Evaluator satisfied | `SUCCESS` |
+| Budget exhausted (iterations/time/tokens/USD) | `PARTIAL` — best-so-far, flagged degraded |
+| Same failure signature twice in a row | `FAILED_NO_PROGRESS` — stop immediately, do not retry a third time |
+| Non-retryable error / human trigger | `FAILED` / `ESCALATED` |
+
+For Video Agent specifically, the QC/repair loop is a bounded instance of this pattern:
+repair attempts are capped at 2 per shot (see `.cursor/rules/15-video-pipeline.mdc`), and
+cap exhaustion must resolve to `PARTIAL` (ship the best shot, flagged degraded) — never to
+silently dropping the shot.

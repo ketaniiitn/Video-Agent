@@ -1,0 +1,25 @@
+---
+description: Provider abstraction for Higgsfield MCP — capability negotiation, failover, and the failure ladder
+globs: ["app/providers/**", "app/mcp/**"]
+alwaysApply: false
+---
+
+# Provider abstraction (Higgsfield MCP)
+
+Higgsfield is accessed only through a provider-abstraction interface with capability
+negotiation and failover — pipeline nodes call the abstraction, never the Higgsfield MCP
+client directly. This is the seam that makes a provider API change a config change, not an
+outage (see `docs/architecture/adr/0004-higgsfield-mcp-provider-abstraction.md`).
+
+Failure ladder, applied in this order:
+
+1. **Retry** — exponential backoff + jitter, retryable errors only, max 3 attempts.
+2. **Fallback** — an alternate provider within the same capability class.
+3. **Circuit break** — per dependency, opens after 5 failures in 30s.
+4. **Degrade** — return a cached, stale, or partial result, always flagged as degraded.
+5. **Fail honestly** — a typed error stating what happened, what was preserved, and what to
+   do next, carrying the `trace_id`.
+
+Adding a new provider means implementing this interface (see
+`docs/playbooks/new-provider-playbook.md` / `@new-provider-onboarding`) — it never means a
+new bespoke call site in a pipeline node.

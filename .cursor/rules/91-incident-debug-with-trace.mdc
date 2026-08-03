@@ -1,0 +1,20 @@
+---
+description: Steps for debugging a production incident starting from an error code and trace_id. Invoke manually with @incident-debug
+alwaysApply: false
+---
+
+# Incident debugging with a trace
+
+Invoke with `@incident-debug` when given an error code + `trace_id` (or a user report that
+implies one).
+
+1. Open the trace in Langfuse; identify the failing span (node) and generation (LLM call),
+   if any.
+2. Check which terminal state was reached (`03-harness-loop-and-termination.mdc`) and which
+   rung of the failure ladder fired (`14-provider-abstraction-mcp.mdc`).
+3. Check whether a checkpoint exists for the job — can it resume, or does it need a manual
+   re-run?
+4. Check budget state (iterations/time/tokens/USD) and circuit-breaker state for the
+   dependency involved — was this a genuine failure or a budget/circuit-break trip?
+5. Write up findings using `docs/playbooks/incident-response-playbook.md`, referencing the
+   `trace_id` directly rather than re-describing what the trace shows.

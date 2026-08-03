@@ -1,0 +1,20 @@
+---
+description: Video Agent v1 out-of-scope list — do not implement or scaffold these even if a request implies them
+alwaysApply: true
+---
+
+# Out of scope for v1
+
+Do **not** add, scaffold, or "future-proof" for any of the following without an explicit
+ADR overriding this rule:
+
+- Dialogue and lip-sync
+- Durations other than exactly 40 seconds (4 × 10s beats)
+- User-supplied reference characters
+- Voiceover
+- An editing timeline / manual re-ordering UI
+- Resolution above 1080p
+
+If a request implies one of these (e.g. "add a voiceover track option"), say that it's
+out of scope for v1 per the PRD and ask whether the person wants to open an ADR to change
+that, rather than quietly implementing it.

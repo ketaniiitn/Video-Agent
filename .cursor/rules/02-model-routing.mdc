@@ -1,0 +1,21 @@
+---
+description: Model access is only ever through LiteLLM aliases, never a named provider
+alwaysApply: true
+---
+
+# Model routing
+
+Code never names a provider (no "gemini", "gpt-", "claude-" strings in application code).
+Every model call goes through the LiteLLM proxy using a logical alias. Swapping the
+underlying model is a gateway config change, not a code diff.
+
+| Alias | Used for |
+|---|---|
+| `reasoning-high` | Story planning (4-beat arc), critique/QC judgement calls |
+| `reasoning-fast` | Routing, classification, lightweight extraction |
+| `vision-default` | Frame inspection, continuity QC scoring against the bible |
+| `embed-default` | Any embeddings (not currently required by Video Agent v1 — see ADR-0005) |
+| `realtime-voice` | Not used by Video Agent v1 (no dialogue/voiceover — out of scope) |
+
+If a task seems to need a model capability not in this table, that's a signal to add an
+alias at the gateway and document it here — not to call a provider SDK directly.

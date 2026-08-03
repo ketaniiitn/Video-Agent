@@ -1,0 +1,23 @@
+---
+description: LangGraph conventions — every agent is a compiled StateGraph
+globs: ["app/graph/**", "app/nodes/**", "app/agents/**"]
+alwaysApply: false
+---
+
+# LangGraph conventions
+
+- Every agent is a compiled `StateGraph`. No hand-rolled control flow that bypasses it.
+- One node = one responsibility. A node that both generates and QC-scores is two nodes.
+- The typed state schema is the *only* contract between nodes — no hidden shared mutable
+  state, no reaching into another node's internals.
+- Checkpoint after every node using the graph's checkpointer (Postgres-backed — see
+  `docs/architecture/adr/0003-langgraph-checkpointing-strategy.md`). Never implement a
+  parallel, ad-hoc "resume" mechanism.
+- Conditional edges implement loop-with-cap patterns (e.g. QC pass/fail). The cap lives in
+  state, evaluated by the edge condition — not as a scattered constant re-checked in
+  multiple places.
+- A node never calls a model provider or the Higgsfield client directly — only through the
+  gateway alias (`02-model-routing.mdc`) or the provider abstraction
+  (`14-provider-abstraction-mcp.mdc`).
+- Node failures raise typed exceptions mapped to the platform error taxonomy — never a bare
+  `Exception`. The exception type determines retry/fallback/circuit-break/degrade routing.

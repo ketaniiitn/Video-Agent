@@ -1,0 +1,28 @@
+---
+description: The Video Agent 6-stage pipeline — continuity bible, sequential generation, frame chaining, QC/repair
+globs: ["app/pipeline/**", "app/agents/video/**", "app/prompts/video/**"]
+alwaysApply: false
+---
+
+# Video Agent pipeline
+
+The pipeline is exactly six stages: plan story (4-beat arc, 40s total) → lock continuity
+bible → generate shots sequentially → chain frames → QC and repair → assemble and deliver.
+
+- **The continuity bible is immutable for the life of a job once locked.** Never mutate it
+  mid-job to "fix" a shot — if the bible itself is wrong, that's a new job, not a patch.
+- **Shots generate strictly sequentially, never in parallel.** This is deliberate
+  (`docs/architecture/adr/0001-sequential-shot-generation.md`): parallel is ~4× faster but
+  breaks frame chaining, and frame chaining (the final frame of shot *n* conditions shot
+  *n+1*) is what carries character/location/lighting identity forward. Do not "optimize"
+  this into parallel execution even under a latency budget request — raise it as a
+  trade-off question instead.
+- **QC repair is capped at 2 attempts per shot.** On cap exhaustion: ship the best-scoring
+  attempt, flag it degraded, resolve the job to `PARTIAL` — never drop the shot and never
+  fail the whole job over one shot.
+- **Shot-level regeneration only.** Fixing shot 3 must leave shots 1, 2, and 4
+  byte-identical and unbilled — regenerating the whole job over one bad shot is a bug.
+- **Never return nothing.** If at least one shot succeeded, deliver a stitched partial with
+  a working resume path rather than an empty failure.
+- **Resume, don't restart.** Completed, checkpointed shots are never regenerated or
+  re-billed on resume.

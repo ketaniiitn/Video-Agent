@@ -1,0 +1,22 @@
+---
+description: Checklist for onboarding a new model/video provider. Invoke manually with @new-provider-onboarding
+alwaysApply: false
+---
+
+# New provider onboarding
+
+Invoke with `@new-provider-onboarding` when adding a new LLM, vision, or video-generation
+provider.
+
+1. Implement the provider-abstraction interface (`14-provider-abstraction-mcp.mdc`) — no
+   bespoke call sites in pipeline nodes.
+2. Register its capability class and where it sits in the fallback order for that class.
+3. Configure circuit-break thresholds (default: 5 failures / 30s unless there's a reason
+   to differ).
+4. Add a cost + latency benchmark test (feeds the >20% cost regression CI gate).
+5. If it's a model (not Higgsfield), add it at the LiteLLM gateway under the correct
+   logical alias and update `02-model-routing.mdc`'s table.
+6. Ship behind a feature flag; if it changes an existing prompt/model path, follow
+   `docs/playbooks/prompt-change-rollout-playbook.md` (10% traffic first).
+7. Update `docs/architecture/adr/0004-higgsfield-mcp-provider-abstraction.md` (or a new
+   ADR) if this changes the fallback topology, not just adds a leaf.

@@ -1,0 +1,16 @@
+---
+description: Postgres schema, migrations, and row-level security conventions
+globs: ["app/db/**", "migrations/**", "alembic/**"]
+alwaysApply: false
+---
+
+# Database & RLS
+
+- Postgres 16 is the system of record. Every tenant-scoped table carries a `tenant_id`
+  column and an RLS policy — no table that holds job/user data is created without one.
+- Migrations are expand/contract, applied before deploy: add nullable → backfill → make
+  required/drop old, each as a separate deployable step. Never a single breaking migration.
+- Treat `docs/architecture/data-model.md` as the canonical schema reference. Propose a
+  schema change there (or open/update an ADR if it's structural) before writing the
+  migration, not after.
+- Never log row-level query results. Logs may reference a row by id, never its contents.

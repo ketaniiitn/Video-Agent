@@ -1,0 +1,21 @@
+---
+description: Core identity of the Video Agent project — what it is and what "done" means
+alwaysApply: true
+---
+
+# Video Agent
+
+One prompt becomes a continuous 40-second story: four 10-second shots with enforced
+narrative and visual continuity. This solves *continuity*, not generation — text-to-video
+models already generate isolated clips fine; four clips from four prompts otherwise show a
+protagonist whose face, room colour, and story never hold together across shots.
+
+This is one of three products (Video Agent, Sales Agent, SQL Agent) on a shared Entermind
+platform. This repo builds Video Agent only. Shared platform behaviour (harness, gateway,
+orchestration, observability, failure handling) is specified once and referenced, not
+re-implemented per feature — see `docs/architecture/platform-spec-summary.md`.
+
+Full source documents: `docs/architecture/platform-spec-summary.md` (Entermind Common
+Platform Specification v1.0) and `docs/architecture/video-agent-prd-summary.md`
+(Video Agent PRD v1.0), both dated 2 Aug 2026. When this rule set is silent, those documents
+govern. When they conflict with a request, say so before proceeding.

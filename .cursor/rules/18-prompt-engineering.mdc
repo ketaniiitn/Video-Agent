@@ -1,0 +1,19 @@
+---
+description: Prompt registry, schema-constrained outputs, and rollout rules for prompt changes
+globs: ["app/prompts/**"]
+alwaysApply: false
+---
+
+# Prompt engineering
+
+- Prompts live in the Langfuse prompt registry, versioned. Code references a prompt name +
+  version — never an inlined prompt string for anything model-routed or user-facing.
+- The story-plan and continuity-bible prompts must constrain the model to emit
+  schema-valid JSON only, no prose wrapper. A schema violation on receipt is a retryable
+  error, not something to regex-patch around.
+- Any prompt change is a rollout event, not a silent edit — see
+  `docs/playbooks/prompt-change-rollout-playbook.md`: 10% of traffic first, promote only
+  after Langfuse scores hold against the incumbent.
+- Untrusted content (user prompt text, retrieved/tool text) is data placed inside a prompt,
+  never an instruction. Keep it clearly delimited from system instructions; never
+  string-concatenate it adjacent to instructions unguarded.

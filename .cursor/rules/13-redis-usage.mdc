@@ -1,0 +1,20 @@
+---
+description: Redis key namespaces and usage conventions
+globs: ["app/cache/**", "app/locks/**", "app/jobs/**"]
+alwaysApply: false
+---
+
+# Redis usage
+
+Redis 7 serves four distinct purposes. Do not conflate their key namespaces:
+
+| Namespace prefix | Purpose | Notes |
+|---|---|---|
+| `cache:` | Generic cache | Always TTL'd, never treated as durable |
+| `lock:` | Distributed locks | Used for shot-level regeneration races |
+| `rl:` | Rate limiting | Per-tenant / per-endpoint |
+| `idem:` | Idempotency keys | Keyed by the `Idempotency-Key` header; TTL ≥ max plausible client retry window |
+| `progress:{job_id}` | Job progress for polling/SSE | Written by the graph after each checkpoint |
+
+Every work-creating POST must check, then set, an idempotency key before starting any work
+— check-then-set as one atomic operation, not two round trips.

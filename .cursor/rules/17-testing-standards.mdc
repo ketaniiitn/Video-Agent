@@ -1,0 +1,19 @@
+---
+description: Testing standards — pytest, no live provider calls, explicit termination-state and resume coverage
+globs: ["tests/**"]
+alwaysApply: false
+---
+
+# Testing standards
+
+- `pytest` + `pytest-asyncio`. Never call a real model or Higgsfield API in a test —
+  record/replay a cassette or stub the gateway/provider abstraction.
+- Every node with a QC/repair or retry loop needs a test per terminal state: `SUCCESS`,
+  `PARTIAL`, `FAILED_NO_PROGRESS`, `FAILED`/`ESCALATED` — don't only test the happy path.
+- Test checkpoint/resume explicitly: kill a run mid-graph in the test and assert it resumes
+  from the last checkpoint rather than restarting finished work.
+- Test idempotency: issue the same request twice with the same `Idempotency-Key` and assert
+  no duplicate work or billing.
+- Anything touching cost or prompts needs a benchmark test — CI blocks merges on >3% eval
+  regression or >20% cost regression, so a change with no such test can't be evaluated by
+  that gate.

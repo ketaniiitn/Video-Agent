@@ -1,0 +1,16 @@
+---
+description: Langfuse tracing model and logging rules — apply when adding instrumentation, logging, or anything cost/trace related
+alwaysApply: false
+---
+
+# Observability
+
+- Trace = one job (one unit of work). Spans = graph nodes. Generations = individual LLM
+  calls, each carrying model, tokens, cost, and prompt version.
+- Every log line is JSON and carries the Langfuse `trace_id`, so any log line can be joined
+  back to its trace.
+- **Never logged, ever:** credentials, raw PII, full media payloads, row-level query
+  results. Log references (ids, URLs, content hashes) instead of the content itself.
+- Every error response carries a stable error code plus the `trace_id`, specifically so a
+  support conversation can open the exact trace immediately — don't return an error without
+  one just because the failure feels minor.

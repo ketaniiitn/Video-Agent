@@ -1,0 +1,18 @@
+---
+description: FastAPI conventions for the Video Agent job API
+globs: ["app/api/**", "app/main.py"]
+alwaysApply: false
+---
+
+# FastAPI conventions
+
+- Async everywhere (`async def`). No blocking calls in a request handler.
+- `POST /jobs` (and any other work-creating POST) requires an `Idempotency-Key` header.
+  Reject with 400 if absent; look up the key in Redis before doing any work.
+- Long-running work never blocks the request. Return `202 Accepted` + `job_id` immediately;
+  the pipeline runs via the graph, progress is polled or streamed from Redis.
+- Error responses use one stable envelope: `{ "code": ..., "message": ..., "trace_id": ... }`.
+  Every error, including 4xx, carries a `trace_id` so a support request can open the exact
+  Langfuse trace.
+- Request/response bodies are Pydantic models only — no raw dict passthrough at the route
+  boundary.
