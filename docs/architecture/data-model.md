@@ -3,7 +3,8 @@
 Postgres 16 is the system of record. Migration `001_m1_initial` owns the complete
 M1 application schema and the LangGraph checkpoint schema.
 `002_expand_tenant_aware_job_fks` adds tenant-aware job references without
-removing the original constraints.
+removing the original constraints. `003_rls_nullif_tenant_setting` hardens RLS
+policies against an empty `app.tenant_id` setting on pooled connections.
 
 ## M1 application tables
 
@@ -44,7 +45,7 @@ Every table containing `tenant_id` has row-level security enabled and forced.
 Its policy uses:
 
 ```sql
-USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
+USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
 ```
 
 PostgreSQL applies the same expression as `WITH CHECK` when it is omitted, so
