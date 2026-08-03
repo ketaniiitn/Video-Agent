@@ -40,6 +40,10 @@ condensed specs, and the two source PDFs (`Guidelines.pdf`, `Video-Agent.pdf`, b
 - M1 prompt registry is a local name+version fallback in `app/prompts/registry.py`
   when Langfuse credentials are unset — deliberate interim vs `18-prompt-engineering.mdc`.
   Switch when `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are configured.
+- M1 gateway resilience deliberately implements failure-ladder rung 1 (retry) and rung 5
+  (fail honestly) only while each logical alias has a single configured target. Add rungs
+  2–4 (same-alias fallback, circuit break, and explicit degradation) when a second target
+  exists for an alias; do not invent cross-alias fallback in application code.
 
 ## Update this file when
 

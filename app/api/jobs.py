@@ -251,8 +251,25 @@ async def resume_job(
     # Acquire the lock synchronously (not via a background task) so a
     # concurrent resume call gets a deterministic 409 in this same
     # request/response cycle, rather than racing against task scheduling.
-    if not await try_acquire_job_lock(state.redis, str(job_id)):
+    lock_token = await try_acquire_job_lock(state.redis, str(job_id))
+    if lock_token is None:
         raise AppError("JOB_LOCKED", "job is already running", http_status=409)
+
+    try:
+        async with state.session_factory(tenant_id) as session:
+            job = await session.get(Job, job_id)
+            if job is None or job.tenant_id != tenant_id:
+                raise AppError("JOB_NOT_FOUND", "Job was not found", http_status=404)
+            if job.status in TERMINAL_STATUSES:
+                raise AppError(
+                    "JOB_ALREADY_TERMINAL",
+                    f"Job is already in terminal status {job.status.value}",
+                    http_status=409,
+                )
+            current_status = job.status
+    except Exception:
+        await release_job_lock(state.redis, str(job_id), lock_token)
+        raise
 
     async def _resume_and_release() -> None:
         try:
@@ -264,7 +281,7 @@ async def resume_job(
                 graph=state.graph,
             )
         finally:
-            await release_job_lock(state.redis, str(job_id))
+            await release_job_lock(state.redis, str(job_id), lock_token)
 
     schedule_background_task(state, _resume_and_release())
     return ResumeResponse(job_id=job_id, status=current_status)

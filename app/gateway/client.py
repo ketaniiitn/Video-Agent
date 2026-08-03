@@ -168,7 +168,7 @@ class LiteLLMGateway:
 
 def build_gateway(settings: "Settings") -> "GatewayClient":
     if not settings.litellm_proxy_url:
-        fixture_dir = Path(__file__).parents[2] / "tests" / "gateway" / "fixtures"
+        fixture_dir = Path(__file__).parent / "fixtures"
         return _FixtureGateway(fixture_dir)
     return LiteLLMGateway(
         transport=_LiteLLMTransport(

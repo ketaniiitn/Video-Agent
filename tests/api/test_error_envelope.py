@@ -47,3 +47,24 @@ def test_request_validation_error_returns_stable_envelope():
     assert set(body.keys()) == {"code", "message", "trace_id"}
     assert body["code"] == "REQUEST_VALIDATION_FAILED"
     assert body["trace_id"].startswith("tr_")
+
+
+def test_unhandled_error_returns_internal_envelope():
+    app = FastAPI()
+    register_exception_handlers(app)
+
+    @app.get("/boom")
+    def boom():
+        current_trace_id.set(mint_trace_id())
+        raise RuntimeError("sensitive detail")
+
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.get("/boom")
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "code": "INTERNAL",
+        "message": "An internal error occurred",
+        "trace_id": response.json()["trace_id"],
+    }
+    assert response.json()["trace_id"].startswith("tr_")

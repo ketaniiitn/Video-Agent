@@ -11,10 +11,24 @@ from app.cache.progress import clear_progress, write_progress
 async def test_lock_is_non_blocking():
     redis = fakeredis.aioredis.FakeRedis()
 
-    assert await try_acquire_job_lock(redis, "j1") is True
-    assert await try_acquire_job_lock(redis, "j1") is False
-    await release_job_lock(redis, "j1")
-    assert await try_acquire_job_lock(redis, "j1") is True
+    token = await try_acquire_job_lock(redis, "j1")
+    assert token is not None
+    assert await redis.get("lock:j1") == token.encode()
+    assert await try_acquire_job_lock(redis, "j1") is None
+    await release_job_lock(redis, "j1", token)
+    assert await try_acquire_job_lock(redis, "j1") is not None
+
+
+@pytest.mark.asyncio
+async def test_wrong_token_cannot_release_lock():
+    redis = fakeredis.aioredis.FakeRedis()
+    token = await try_acquire_job_lock(redis, "j1")
+    assert token is not None
+
+    await release_job_lock(redis, "j1", "not-the-owner")
+
+    assert await redis.get("lock:j1") == token.encode()
+    assert await try_acquire_job_lock(redis, "j1") is None
 
 
 @pytest.mark.asyncio

@@ -68,7 +68,8 @@ async def run_job(
     gateway: GatewayClient,
 ) -> None:
     del gateway  # already bound into node closures by build_graph; kept for interface parity
-    if not await try_acquire_job_lock(redis, str(job_id)):
+    lock_token = await try_acquire_job_lock(redis, str(job_id))
+    if lock_token is None:
         raise AppError("JOB_LOCKED", "job is already running", http_status=409)
     try:
         await run_locked_job(
@@ -79,7 +80,7 @@ async def run_job(
             graph=graph,
         )
     finally:
-        await release_job_lock(redis, str(job_id))
+        await release_job_lock(redis, str(job_id), lock_token)
 
 
 async def run_locked_job(
@@ -210,6 +211,12 @@ async def _mark_running(
         job = await session.get(Job, job_id)
         if job is None or job.tenant_id != tenant_id:
             raise AppError("JOB_NOT_FOUND", "Job was not found", http_status=404)
+        if job.status in TERMINAL_STATUSES:
+            raise AppError(
+                "JOB_ALREADY_TERMINAL",
+                f"Job is already in terminal status {job.status.value}",
+                http_status=409,
+            )
 
         if job.started_at is None:
             job.started_at = datetime.now(UTC)

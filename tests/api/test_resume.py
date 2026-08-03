@@ -5,11 +5,12 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from app.api import jobs as jobs_api
 from app.db.models import Job
 from app.domain.errors import AppError
 from app.domain.schemas import JobStatus
 from app.gateway.client import FakeGateway, Usage
-from app.jobs.runner import sweep_stale_jobs
+from app.jobs.runner import _mark_running, sweep_stale_jobs
 from tests.api.conftest import VALID_BIBLE, VALID_PLAN, build_test_app
 
 
@@ -68,6 +69,62 @@ async def test_resume_on_terminal_job_returns_409_job_already_terminal():
         body = response.json()
         assert body["code"] == "JOB_ALREADY_TERMINAL"
         assert body["trace_id"].startswith("tr_")
+    finally:
+        await app.aclose()
+
+
+@pytest.mark.asyncio
+async def test_mark_running_rejects_job_that_became_terminal():
+    app = await build_test_app()
+    try:
+        job_id = await _insert_job(
+            app, app.tenant_a, status=JobStatus.BIBLE_LOCKED
+        )
+
+        with pytest.raises(AppError) as excinfo:
+            await _mark_running(
+                app.state.session_factory,
+                app.tenant_a,
+                job_id,
+                needs_initial_state=True,
+            )
+
+        assert excinfo.value.code == "JOB_ALREADY_TERMINAL"
+        async with app.state.session_factory(app.tenant_a) as session:
+            job = await session.get(Job, job_id)
+            assert job.status is JobStatus.BIBLE_LOCKED
+            assert job.started_at is None
+    finally:
+        await app.aclose()
+
+
+@pytest.mark.asyncio
+async def test_resume_rechecks_terminal_status_after_lock_acquisition(monkeypatch):
+    app = await build_test_app()
+    try:
+        job_id = await _insert_job(app, app.tenant_a, status=JobStatus.QUEUED)
+        acquire = jobs_api.try_acquire_job_lock
+
+        async def acquire_then_finish(redis, acquired_job_id):
+            token = await acquire(redis, acquired_job_id)
+            async with app.state.session_factory(app.tenant_a) as session:
+                job = await session.get(Job, job_id)
+                job.status = JobStatus.BIBLE_LOCKED
+                await session.commit()
+            return token
+
+        monkeypatch.setattr(
+            jobs_api, "try_acquire_job_lock", acquire_then_finish
+        )
+
+        response = await app.client.post(
+            f"/jobs/{job_id}/resume",
+            headers={"X-Tenant-Id": str(app.tenant_a)},
+        )
+
+        assert response.status_code == 409
+        assert response.json()["code"] == "JOB_ALREADY_TERMINAL"
+        assert await app.state.redis.get(f"lock:{job_id}") is None
     finally:
         await app.aclose()
 
