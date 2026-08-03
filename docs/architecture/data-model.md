@@ -1,22 +1,52 @@
-# Data Model (proposed)
+# Data Model
 
-Proposed Postgres 16 schema. **Nothing here is implemented yet** — the first migration PR
-should treat this file as the spec to implement against, and update it if reality diverges.
-Every table below is tenant-scoped and needs an RLS policy (`.cursor/rules/12-database-rls.mdc`).
+Postgres 16 is the system of record. Migration `001_m1_initial` owns the complete
+M1 application schema and the LangGraph checkpoint schema.
 
-| Table | Key columns | Notes |
-|---|---|---|
-| `tenants` | `id`, `name` | RLS root |
-| `jobs` | `id`, `tenant_id`, `status`, `prompt`, `created_at`, `budget_*` | `status` mirrors harness terminal states |
-| `story_plans` | `id`, `job_id`, `beats_json` | 4-beat arc, machine-readable |
-| `continuity_bibles` | `id`, `job_id`, `bible_json`, `locked_at` | Immutable once `locked_at` is set |
-| `shots` | `id`, `job_id`, `beat_index`, `status`, `attempt_count`, `frame_ref`, `cost_usd`, `model_alias`, `seed`, `prompt` | One row per beat (4 per job); `attempt_count` caps at repair limit |
-| `qc_scores` | `id`, `shot_id`, `score`, `attempt_number`, `rationale` | One row per QC pass, not overwritten |
-| `cost_ledger` | `id`, `job_id`, `shot_id` (nullable), `usd`, `tokens`, `model_alias`, `created_at` | Feeds cost-regression CI gate and per-job reproducibility |
-| `idempotency_keys` | `key`, `tenant_id`, `job_id`, `created_at`, `expires_at` | Mirrors Redis `idem:` entries; Redis is the fast path, this is the durable record |
+## M1 application tables
+
+- `tenants`: `id`, `name`, `created_at`. This is the tenant identity root and is
+  accessed only by privileged provisioning code; it does not contain a `tenant_id`.
+- `jobs`: `id`, `tenant_id`, `status`, `prompt`, `trace_id`, `created_at`,
+  `updated_at`, nullable `started_at`, all four `budget_max_*` fields, and
+  `budget_used_usd`, `budget_used_tokens`, and `budget_used_iterations`.
+  `status` is the native `job_status` enum containing all harness outcomes.
+- `story_plans`: `id`, `tenant_id`, unique `job_id`, `beats_json`, `created_at`.
+- `continuity_bibles`: `id`, `tenant_id`, unique `job_id`, `bible_json`,
+  nullable `locked_at`, `created_at`.
+- `idempotency_keys`: `id`, `tenant_id`, `key`, `request_hash`, `job_id`,
+  `created_at`, `expires_at`. `(tenant_id, key)` is unique, making durable
+  work creation idempotent per tenant.
+
+Foreign keys from tenant data use `ON DELETE CASCADE`. Story plans and
+continuity bibles are one-to-one with jobs.
+
+## Checkpoint tables
+
+Alembic creates `checkpoint_migrations`, `checkpoints`, `checkpoint_blobs`, and
+`checkpoint_writes`. Their columns and keys mirror
+`langgraph-checkpoint-postgres` 3.1.1 schema version 10. The three data tables
+also carry a non-null `tenant_id`, populated from the transaction-local tenant
+setting so the unmodified saver can write through RLS.
+
+Alembic is the only DDL owner. Application startup must not call
+`AsyncPostgresSaver.setup()`. A checkpoint package schema upgrade requires a
+new reviewed Alembic migration before the dependency is promoted.
+
+## Row-level security
+
+Every table containing `tenant_id` has row-level security enabled and forced.
+Its policy uses:
+
+```sql
+USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
+```
+
+Application transactions set `app.tenant_id` locally before accessing tenant
+data. A missing setting exposes no tenant rows.
 
 ## Deferred
 
-Vector storage (pgvector vs MongoDB Atlas) is **not** included above — see
-`adr/0005-pgvector-vs-mongo-atlas.md`. Video Agent v1 has no specified semantic-search use
-case; don't add a vector table speculatively.
+`shots`, `qc_scores`, and `cost_ledger` arrive with later M1 pipeline tasks.
+Vector storage remains deferred by ADR-0005 because Video Agent v1 has no
+semantic-search requirement.
