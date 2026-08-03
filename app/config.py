@@ -1,3 +1,4 @@
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,8 +20,14 @@ class Settings(BaseSettings):
     langfuse_secret_key: str = ""
     langfuse_host: str = "https://cloud.langfuse.com"
 
-    higgsfield_mcp_url: str = ""
-    higgsfield_mcp_api_key: str = ""
+    video_mcp_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("VIDEO_MCP_URL", "HIGGSFIELD_MCP_URL"),
+    )
+    video_mcp_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("VIDEO_MCP_API_KEY", "HIGGSFIELD_MCP_API_KEY"),
+    )
 
     storage_bucket: str = ""
     presigned_url_ttl_seconds: int = 3600

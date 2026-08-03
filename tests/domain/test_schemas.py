@@ -16,6 +16,29 @@ def test_story_plan_requires_four_beats_of_ten_seconds():
     assert sum(b.duration_seconds for b in plan.beats) == 40
 
 
+def test_story_plan_rejects_wrong_beat_count():
+    with pytest.raises(ValidationError):
+        StoryPlan(
+            beats=[
+                Beat(name="setup", duration_seconds=10, action="a", camera="w"),
+                Beat(name="development", duration_seconds=10, action="b", camera="m"),
+                Beat(name="turn", duration_seconds=10, action="c", camera="c"),
+            ]
+        )
+
+
+def test_story_plan_rejects_wrong_beat_names_or_order():
+    with pytest.raises(ValidationError):
+        StoryPlan(
+            beats=[
+                Beat(name="development", duration_seconds=10, action="a", camera="w"),
+                Beat(name="setup", duration_seconds=10, action="b", camera="m"),
+                Beat(name="turn", duration_seconds=10, action="c", camera="c"),
+                Beat(name="resolution", duration_seconds=10, action="d", camera="w"),
+            ]
+        )
+
+
 def test_story_plan_rejects_wrong_duration():
     with pytest.raises(ValidationError):
         StoryPlan(
