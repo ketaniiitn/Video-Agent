@@ -48,9 +48,16 @@ def _cached_outcome(value: bytes | str, digest: str) -> IdempotencyOutcome:
     return IdempotencyOutcome(kind="replay", job_id=UUID(cached["job_id"]))
 
 
-async def _write_cache(redis, tenant_id: UUID, key: str, row: IdempotencyKey) -> None:
+async def mirror_idempotency_to_redis(
+    redis,
+    tenant_id: UUID,
+    key: str,
+    request_hash: str,
+    job_id: UUID,
+) -> None:
+    """Mirror a durably committed idempotency row to Redis."""
     value = json.dumps(
-        {"job_id": str(row.job_id), "request_hash": row.request_hash},
+        {"job_id": str(job_id), "request_hash": request_hash},
         sort_keys=True,
         separators=(",", ":"),
     )
@@ -61,14 +68,14 @@ async def _write_cache(redis, tenant_id: UUID, key: str, row: IdempotencyKey) ->
     )
 
 
-async def begin_idempotent(
+async def persist_idempotency_key(
     session,
-    redis,
     tenant_id: UUID,
     key: str,
     request_hash: str,
     job_id: UUID,
 ) -> Literal["created"]:
+    """Insert the idempotency row without committing or touching Redis."""
     row = IdempotencyKey(
         tenant_id=tenant_id,
         key=key,
@@ -81,7 +88,6 @@ async def begin_idempotent(
         session.add(row)
         await session.flush()
 
-    await _write_cache(redis, tenant_id, key, row)
     return "created"
 
 
@@ -93,14 +99,17 @@ async def resolve_idempotency(
     request_hash: str,
     job_id: UUID,
 ) -> IdempotencyOutcome:
+    """Resolve or persist an idempotency key without writing Redis.
+
+    After this returns, the caller must commit the PostgreSQL transaction before
+    calling ``mirror_idempotency_to_redis``.
+    """
     cached = await redis.get(_redis_key(tenant_id, key))
     if cached is not None:
         return _cached_outcome(cached, request_hash)
 
     try:
-        await begin_idempotent(
-            session, redis, tenant_id, key, request_hash, job_id
-        )
+        await persist_idempotency_key(session, tenant_id, key, request_hash, job_id)
     except IntegrityError:
         existing = await session.scalar(
             select(IdempotencyKey).where(
@@ -112,7 +121,6 @@ async def resolve_idempotency(
             raise
         if existing.request_hash != request_hash:
             _raise_mismatch()
-        await _write_cache(redis, tenant_id, key, existing)
         return IdempotencyOutcome(kind="replay", job_id=existing.job_id)
 
     return IdempotencyOutcome(kind="created", job_id=job_id)

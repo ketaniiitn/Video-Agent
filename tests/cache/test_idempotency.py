@@ -8,7 +8,11 @@ import fakeredis.aioredis
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app.cache.idempotency import request_hash, resolve_idempotency
+from app.cache.idempotency import (
+    mirror_idempotency_to_redis,
+    request_hash,
+    resolve_idempotency,
+)
 from app.db.models import IdempotencyKey
 from app.domain.errors import AppError
 from app.domain.schemas import BudgetCaps
@@ -18,6 +22,8 @@ class FakeSession:
     def __init__(self, existing=None):
         self.added = None
         self.existing = existing
+        self.committed = False
+        self.rolled_back = False
 
     @asynccontextmanager
     async def begin_nested(self):
@@ -32,6 +38,12 @@ class FakeSession:
 
     async def scalar(self, _statement):
         return self.existing
+
+    async def rollback(self):
+        self.rolled_back = True
+
+    async def commit(self):
+        self.committed = True
 
 
 def test_request_hash_stable_for_same_body():
@@ -104,7 +116,7 @@ async def test_redis_fast_path_rejects_hash_mismatch():
 
 
 @pytest.mark.asyncio
-async def test_postgres_insert_creates_and_populates_redis():
+async def test_outer_rollback_after_insert_does_not_populate_redis():
     redis = fakeredis.aioredis.FakeRedis()
     session = FakeSession()
     tenant_id = uuid4()
@@ -114,10 +126,34 @@ async def test_postgres_insert_creates_and_populates_redis():
     outcome = await resolve_idempotency(
         session, redis, tenant_id, "request-key", digest, job_id
     )
+    await session.rollback()
 
     assert outcome.kind == "created"
     assert outcome.job_id == job_id
     assert session.added.job_id == job_id
+    assert session.rolled_back is True
+    assert await redis.get(f"idem:{tenant_id}:request-key") is None
+
+
+@pytest.mark.asyncio
+async def test_redis_mirror_is_explicit_after_commit():
+    redis = fakeredis.aioredis.FakeRedis()
+    session = FakeSession()
+    tenant_id = uuid4()
+    job_id = uuid4()
+    digest = request_hash("hello", None)
+
+    await resolve_idempotency(
+        session, redis, tenant_id, "request-key", digest, job_id
+    )
+    assert await redis.get(f"idem:{tenant_id}:request-key") is None
+
+    await session.commit()
+    await mirror_idempotency_to_redis(
+        redis, tenant_id, "request-key", digest, job_id
+    )
+
+    assert session.committed is True
     cached = json.loads(await redis.get(f"idem:{tenant_id}:request-key"))
     assert cached == {"job_id": str(job_id), "request_hash": digest}
     assert 86399 <= await redis.ttl(f"idem:{tenant_id}:request-key") <= 86400
