@@ -133,7 +133,8 @@ async def sweep_stale_jobs(state: "AppState") -> list[asyncio.Task]:
     tasks: list[asyncio.Task] = []
     for job_id, tenant_id in rows:
         tasks.append(
-            _schedule(
+            schedule_background_task(
+                state,
                 run_job(
                     job_id=job_id,
                     tenant_id=tenant_id,
@@ -147,11 +148,26 @@ async def sweep_stale_jobs(state: "AppState") -> list[asyncio.Task]:
     return tasks
 
 
-def _schedule(coro: Any) -> asyncio.Task:
-    """create_task + log (rather than drop) any exception on completion."""
+def schedule_background_task(state: "AppState", coro: Any) -> asyncio.Task:
+    """Create and track a task until it finishes."""
     task = asyncio.create_task(coro)
-    task.add_done_callback(_log_task_exception)
+    state.background_tasks.append(task)
+
+    def _on_done(done_task: asyncio.Task) -> None:
+        _log_task_exception(done_task)
+        try:
+            state.background_tasks.remove(done_task)
+        except ValueError:
+            pass
+
+    task.add_done_callback(_on_done)
     return task
+
+
+async def drain_background_tasks(state: "AppState") -> None:
+    """Wait for all tracked work, including tasks added while draining."""
+    while state.background_tasks:
+        await asyncio.gather(*tuple(state.background_tasks), return_exceptions=True)
 
 
 def _log_task_exception(task: asyncio.Task) -> None:

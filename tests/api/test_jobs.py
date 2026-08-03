@@ -11,6 +11,21 @@ from app.gateway.client import FakeGateway, Usage
 from tests.api.conftest import VALID_PLAN, build_test_app
 
 
+class BlockingGateway(FakeGateway):
+    def __init__(self):
+        super().__init__(
+            responses={"story_plan": VALID_PLAN},
+            usage=Usage(usd=0.01, tokens=10),
+        )
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def complete_json(self, alias, messages, schema_name):
+        self.started.set()
+        await self.release.wait()
+        return await super().complete_json(alias, messages, schema_name)
+
+
 async def _poll_until(app, job_id, tenant_id, *, statuses, attempts=50, delay=0.02):
     for _ in range(attempts):
         response = await app.client.get(
@@ -22,6 +37,31 @@ async def _poll_until(app, job_id, tenant_id, *, statuses, attempts=50, delay=0.
             return body
         await asyncio.sleep(delay)
     pytest.fail(f"job {job_id} never reached {statuses}; last status={body['status']}")
+
+
+@pytest.mark.asyncio
+async def test_background_jobs_are_tracked_and_drained_on_close():
+    gateway = BlockingGateway()
+    app = await build_test_app(gateway=gateway)
+    response = await app.client.post(
+        "/jobs",
+        json={"prompt": "A courier crosses a flooded city."},
+        headers={
+            "Idempotency-Key": "key-background-drain",
+            "X-Tenant-Id": str(app.tenant_a),
+        },
+    )
+    assert response.status_code == 202
+    await gateway.started.wait()
+
+    assert len(app.state.background_tasks) == 1
+    close_task = asyncio.create_task(app.aclose())
+    await asyncio.sleep(0)
+    assert not close_task.done()
+
+    gateway.release.set()
+    await close_task
+    assert not app.state.background_tasks
 
 
 @pytest.mark.asyncio
@@ -39,6 +79,7 @@ async def test_happy_path_reaches_bible_locked():
         assert response.status_code == 202
         job_id = response.json()["job_id"]
         assert response.json()["status"] == JobStatus.QUEUED.value
+        await app.drain_background_tasks()
 
         body = await _poll_until(
             app, job_id, app.tenant_a, statuses={JobStatus.BIBLE_LOCKED.value}
@@ -57,6 +98,7 @@ async def test_idempotency_replay_returns_same_job_and_single_row():
         body = {"prompt": "A courier crosses a flooded city."}
 
         first = await app.client.post("/jobs", json=body, headers=headers)
+        await app.drain_background_tasks()
         second = await app.client.post("/jobs", json=body, headers=headers)
 
         assert first.status_code == 202
@@ -107,6 +149,7 @@ async def test_create_job_succeeds_with_foreign_keys_enforced():
         )
         assert response.status_code == 202
         job_id = UUID(response.json()["job_id"])
+        await app.drain_background_tasks()
 
         async with app.maker() as session:
             job = await session.get(Job, job_id)
@@ -145,6 +188,7 @@ async def test_redis_stale_mirror_after_job_deleted_does_not_fabricate_queued():
         cached_before = await app.state.redis.get(cache_key)
         assert cached_before is not None
         assert json.loads(cached_before)["job_id"] == str(old_job_id)
+        await app.drain_background_tasks()
 
         async with app.maker() as session:
             job = await session.get(Job, old_job_id)
@@ -161,6 +205,7 @@ async def test_redis_stale_mirror_after_job_deleted_does_not_fabricate_queued():
         new_job_id = UUID(second.json()["job_id"])
         assert new_job_id != old_job_id
         assert second.json()["status"] == JobStatus.QUEUED.value
+        await app.drain_background_tasks()
 
         cached_after = await app.state.redis.get(cache_key)
         assert cached_after is not None
@@ -185,6 +230,7 @@ async def test_idempotency_mismatch_returns_422():
             "/jobs", json={"prompt": "prompt A"}, headers=headers
         )
         assert first.status_code == 202
+        await app.drain_background_tasks()
 
         second = await app.client.post(
             "/jobs", json={"prompt": "prompt B"}, headers=headers
@@ -267,6 +313,7 @@ async def test_cross_tenant_get_returns_404():
             },
         )
         job_id = create.json()["job_id"]
+        await app.drain_background_tasks()
 
         response = await app.client.get(
             f"/jobs/{job_id}", headers={"X-Tenant-Id": str(app.tenant_b)}
@@ -315,6 +362,7 @@ async def test_budget_cap_stops_before_second_node_and_reports_partial():
         )
         assert response.status_code == 202
         job_id = response.json()["job_id"]
+        await app.drain_background_tasks()
 
         body = await _poll_until(
             app, job_id, app.tenant_a, statuses={JobStatus.PARTIAL.value}

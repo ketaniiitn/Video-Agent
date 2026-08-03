@@ -20,8 +20,6 @@ middleware in ``app/main.py``, so it is already set before this module runs):
 
 from __future__ import annotations
 
-import asyncio
-import logging
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header
@@ -45,10 +43,14 @@ from app.domain.schemas import (
     JobStatus,
     StoryPlan,
 )
-from app.jobs.runner import TERMINAL_STATUSES, run_job, run_locked_job
+from app.jobs.runner import (
+    TERMINAL_STATUSES,
+    run_job,
+    run_locked_job,
+    schedule_background_task,
+)
 from app.observability.tracing import resolve_trace_id
 
-logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
@@ -89,19 +91,6 @@ def _parse_tenant_id(raw: str) -> UUID:
         raise AppError(
             "TENANT_ID_INVALID", "X-Tenant-Id must be a UUID", http_status=400
         ) from exc
-
-
-def _log_task_exception(task: asyncio.Task) -> None:
-    if task.cancelled():
-        return
-    exc = task.exception()
-    if exc is not None:
-        logger.error("background job task failed", exc_info=exc)
-
-
-def _schedule(coro) -> None:
-    task = asyncio.create_task(coro)
-    task.add_done_callback(_log_task_exception)
 
 
 @router.post("", status_code=202, response_model=CreateJobResponse)
@@ -177,7 +166,8 @@ async def create_job(
         state.redis, candidate_job_id, {"status": JobStatus.QUEUED.value}
     )
 
-    _schedule(
+    schedule_background_task(
+        state,
         run_job(
             job_id=candidate_job_id,
             tenant_id=tenant_id,
@@ -276,5 +266,5 @@ async def resume_job(
         finally:
             await release_job_lock(state.redis, str(job_id))
 
-    _schedule(_resume_and_release())
+    schedule_background_task(state, _resume_and_release())
     return ResumeResponse(job_id=job_id, status=current_status)

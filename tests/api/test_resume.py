@@ -89,7 +89,9 @@ async def test_concurrent_resume_second_call_returns_409_job_locked():
         locked_response = next(r for r in responses if r.status_code == 409)
         assert locked_response.json()["code"] == "JOB_LOCKED"
 
-        # Drain the winning background task so it doesn't outlive the test.
+        # Keep both resume requests concurrent for the JOB_LOCKED assertion,
+        # then drain the winning background task before touching SQLite again.
+        await app.drain_background_tasks()
         await _poll_until(
             app,
             job_id,
@@ -131,6 +133,7 @@ async def test_sweep_resumes_job_with_started_at_set_but_no_checkpoint():
         # which seeds a real mid-graph checkpoint first.
 
         await sweep_stale_jobs(app.state)
+        await app.drain_background_tasks()
 
         body = await _poll_until(
             app, job_id, app.tenant_a, statuses={JobStatus.BIBLE_LOCKED.value}
@@ -156,6 +159,7 @@ async def test_resume_endpoint_with_started_at_set_but_no_checkpoint():
             f"/jobs/{job_id}/resume", headers={"X-Tenant-Id": str(app.tenant_a)}
         )
         assert response.status_code == 202
+        await app.drain_background_tasks()
 
         body = await _poll_until(
             app, job_id, app.tenant_a, statuses={JobStatus.BIBLE_LOCKED.value}
@@ -224,6 +228,7 @@ async def test_startup_sweep_resumes_mid_graph_job_to_bible_locked():
         gateway.responses["continuity_bible"] = VALID_BIBLE
 
         await sweep_stale_jobs(app.state)
+        await app.drain_background_tasks()
 
         body = await _poll_until(
             app, job_id, app.tenant_a, statuses={JobStatus.BIBLE_LOCKED.value}

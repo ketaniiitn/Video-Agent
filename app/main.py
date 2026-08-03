@@ -22,7 +22,7 @@ from app.db.session import (
 )
 from app.gateway.client import build_gateway
 from app.graph.compile import build_graph, postgres_checkpointer
-from app.jobs.runner import sweep_stale_jobs
+from app.jobs.runner import drain_background_tasks, sweep_stale_jobs
 from app.observability.tracing import current_trace_id, mint_trace_id
 
 
@@ -73,7 +73,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
 
         await sweep_stale_jobs(app.state.app_state)
-        yield
+        try:
+            yield
+        finally:
+            await drain_background_tasks(app.state.app_state)
 
 
 async def _mint_trace_id_middleware(

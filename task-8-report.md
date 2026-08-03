@@ -174,3 +174,41 @@ the request's `trace_id`, at `422`. New test
 - Tests: `tests/api/conftest.py`, `tests/api/test_jobs.py`,
   `tests/api/test_resume.py`, `tests/api/test_error_envelope.py`,
   `tests/jobs/test_runner.py` (new), `tests/test_config.py` (new)
+
+## Important follow-up: deterministic background-task cleanup
+
+**Root cause:** `POST /jobs`, `POST /jobs/{id}/resume`, and the startup
+sweep launched untracked `asyncio` tasks. API tests use one in-memory
+SQLite connection through `StaticPool`, so a test could open a nested
+transaction or delete a job while its background runner was still using
+that same connection. The stale-Redis regression was especially exposed:
+it deleted the first job before its runner was guaranteed to have
+finished. Concurrent SQLAlchemy session cleanup then intermittently raised
+`sqlite3.OperationalError: no such savepoint`.
+
+**Fix:**
+- `AppState.background_tasks` owns every in-process job task.
+- API create/resume and stale-job sweep scheduling use one tracking helper;
+  completed tasks are logged and removed from the list.
+- Application shutdown drains tracked tasks before Redis and database
+  resources are closed.
+- The API test harness drains tasks during `TestApp.aclose()`. Tests that
+  do not exercise concurrency also drain immediately after create/resume
+  or sweep calls, before issuing more SQLite work.
+- The `JOB_LOCKED` test preserves its two concurrent resume requests and
+  drains only after asserting the `202`/`409` split.
+- The stale-Redis test now drains the first run before deleting its job.
+- New regression coverage holds a real background run open and proves it
+  is tracked and that test-app close waits for it.
+
+**Determinism verification (back-to-back, same shell command):**
+
+```text
+.venv/bin/python -m pytest -q && .venv/bin/python -m pytest -q
+Run 1: 74 passed, 5 skipped, 1 warning in 1.89s
+Run 2: 74 passed, 5 skipped, 1 warning in 1.87s
+```
+
+The five skips remain the live-Postgres RLS tests gated by
+`TEST_DATABASE_URL`. The warning is the pre-existing FastAPI/Starlette
+`httpx` deprecation warning.

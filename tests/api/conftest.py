@@ -26,6 +26,7 @@ from app.config import Settings
 from app.db.models import Base, Tenant
 from app.gateway.client import FakeGateway, Usage
 from app.graph.compile import build_graph
+from app.jobs.runner import drain_background_tasks
 from app.main import create_app
 
 VALID_PLAN = {
@@ -123,7 +124,12 @@ class TestApp:
         self.tenant_b = tenant_b
 
     async def aclose(self) -> None:
+        await drain_background_tasks(self.state)
         await self.client.aclose()
+        await self.state.redis.aclose()
+
+    async def drain_background_tasks(self) -> None:
+        await drain_background_tasks(self.state)
 
 
 async def build_test_app(

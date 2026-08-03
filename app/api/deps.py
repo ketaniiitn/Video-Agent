@@ -8,9 +8,10 @@ individual globals, so production wiring stays the single place that
 assembles real pools/gateways.
 """
 
+import asyncio
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
@@ -32,6 +33,7 @@ class AppState:
     sweep_session_factory: RawSessionFactory
     graph: Any
     gateway: GatewayClient
+    background_tasks: list[asyncio.Task[Any]] = field(default_factory=list)
 
 
 def get_app_state(request: Request) -> AppState:
