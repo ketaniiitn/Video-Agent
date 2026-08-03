@@ -34,10 +34,38 @@ def _get_default_sessionmaker() -> async_sessionmaker[AsyncSession]:
 
 
 @asynccontextmanager
-async def get_session(tenant_id: UUID) -> AsyncIterator[AsyncSession]:
-    """Yield a transaction whose tenant context is enforced by PostgreSQL RLS."""
-    sessionmaker = _get_default_sessionmaker()
-    async with sessionmaker() as session:
+async def get_session(
+    tenant_id: UUID,
+    sessionmaker: async_sessionmaker[AsyncSession] | None = None,
+) -> AsyncIterator[AsyncSession]:
+    """Yield a transaction whose tenant context is enforced by PostgreSQL RLS.
+
+    ``sessionmaker`` is optional so this keeps matching the single-argument
+    ``SessionFactory`` shape used by graph nodes; callers that manage their
+    own engine (e.g. app startup, so it can be disposed on shutdown) bind it
+    with ``functools.partial(get_session, sessionmaker=...)``.
+    """
+    maker = sessionmaker or _get_default_sessionmaker()
+    async with maker() as session:
         async with session.begin():
             await set_tenant_context(session, tenant_id)
             yield session
+
+
+@asynccontextmanager
+async def get_raw_session(
+    sessionmaker: async_sessionmaker[AsyncSession] | None = None,
+) -> AsyncIterator[AsyncSession]:
+    """Session with no tenant context set — for privileged, cross-tenant reads.
+
+    Only the startup sweep (finding non-terminal jobs across all tenants)
+    should use this. It reads no tenant-scoped columns beyond ``id`` and
+    ``tenant_id`` needed to route work back through the tenant-scoped
+    ``get_session`` for everything else. In production, forced RLS means
+    this only sees rows if the connecting role has ``BYPASSRLS`` (or is the
+    table owner without ``FORCE ROW LEVEL SECURITY`` friction) — grant that
+    to the app's sweep role, not to the general per-request role.
+    """
+    maker = sessionmaker or _get_default_sessionmaker()
+    async with maker() as session:
+        yield session
