@@ -1,3 +1,4 @@
+from decimal import Decimal
 from enum import Enum
 
 from pydantic import BaseModel, field_validator
@@ -7,10 +8,26 @@ class JobStatus(str, Enum):
     QUEUED = "QUEUED"
     RUNNING = "RUNNING"
     BIBLE_LOCKED = "BIBLE_LOCKED"
+    SHOTS_READY = "SHOTS_READY"
     PARTIAL = "PARTIAL"
     FAILED = "FAILED"
     FAILED_NO_PROGRESS = "FAILED_NO_PROGRESS"
     ESCALATED = "ESCALATED"
+
+
+class ShotStatus(str, Enum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
+class ShotSummary(BaseModel):
+    beat_index: int
+    status: ShotStatus
+    clip_path: str | None
+    frame_path: str | None
+    cost_usd: Decimal
 
 
 BEAT_NAMES = ("setup", "development", "turn", "resolution")

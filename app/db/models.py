@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger,
+    CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
@@ -19,7 +20,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from app.domain.schemas import JobStatus
+from app.domain.schemas import JobStatus, ShotStatus
 
 
 class Base(DeclarativeBase):
@@ -135,6 +136,100 @@ class ContinuityBibleRow(Base):
     )
     bible_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class Shot(Base):
+    __tablename__ = "shots"
+    __table_args__ = (
+        UniqueConstraint("job_id", "beat_index", name="uq_shots_job_id_beat_index"),
+        CheckConstraint(
+            "beat_index BETWEEN 1 AND 4",
+            name="ck_shots_beat_index",
+        ),
+        ForeignKeyConstraint(
+            ["job_id", "tenant_id"],
+            ["jobs.id", "jobs.tenant_id"],
+            name="fk_shots_job_tenant",
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    job_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("jobs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    beat_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[ShotStatus] = mapped_column(
+        Enum(ShotStatus, name="shot_status", native_enum=True),
+        nullable=False,
+        default=ShotStatus.PENDING,
+    )
+    attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    clip_path: Mapped[str | None] = mapped_column(String(1024))
+    frame_path: Mapped[str | None] = mapped_column(String(1024))
+    cost_usd: Mapped[Decimal] = mapped_column(
+        Numeric(12, 6),
+        nullable=False,
+        default=Decimal("0"),
+        server_default="0",
+    )
+    provider_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    seed: Mapped[int | None] = mapped_column(BigInteger)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class CostLedger(Base):
+    __tablename__ = "cost_ledger"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["job_id", "tenant_id"],
+            ["jobs.id", "jobs.tenant_id"],
+            name="fk_cost_ledger_job_tenant",
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    job_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("jobs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    shot_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("shots.id", ondelete="SET NULL"),
+    )
+    usd: Mapped[Decimal] = mapped_column(Numeric(12, 6), nullable=False)
+    tokens: Mapped[int | None] = mapped_column(BigInteger)
+    provider_id: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
