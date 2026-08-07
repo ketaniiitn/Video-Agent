@@ -3,7 +3,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        populate_by_name=True,
+        extra="ignore",
+    )
 
     app_env: str = "development"
 
@@ -44,8 +49,10 @@ class Settings(BaseSettings):
 
     storage_bucket: str = ""
     presigned_url_ttl_seconds: int = 3600
+    media_root: str = "./data/media"
 
     feature_story_planning: bool = True
+    feature_shot_generation: bool = False
     idempotency_ttl_seconds: int = 86400
 
     def database_url_for_sweep(self) -> str:
