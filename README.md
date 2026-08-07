@@ -27,13 +27,13 @@ PROJECT_MEMORY.md  Durable facts worth not re-explaining every session
 
 ## Status
 
-**M1 implemented** — FastAPI job lifecycle, 2-node LangGraph (`plan_story` →
-`lock_continuity_bible`), Postgres checkpointing with tenant RLS, idempotent job creation,
-and gateway-backed planning ending at API status `BIBLE_LOCKED`. Shot generation, QC,
-assemble, and deliver are not wired yet.
+**M1 + M3a implemented** — job lifecycle through continuity bible, plus sequential
+shot generation and frame chaining gated by `FEATURE_SHOT_GENERATION`, ending at
+`SHOTS_READY` with clips on local `MEDIA_ROOT`. Assemble, deliver, and QC/repair
+are not wired yet.
 
-Spec: `docs/superpowers/specs/2026-08-03-m1-job-lifecycle-design.md` · Plan:
-`docs/superpowers/plans/2026-08-03-m1-job-lifecycle.md` · Schema:
+Specs: `docs/superpowers/specs/2026-08-03-m1-job-lifecycle-design.md`,
+`docs/superpowers/specs/2026-08-07-m3a-shot-generation-design.md` · Schema:
 `docs/architecture/data-model.md`
 
 ## Stack (see `docs/architecture/platform-spec-summary.md` for full detail)

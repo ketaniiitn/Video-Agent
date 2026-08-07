@@ -4,19 +4,27 @@ Target LangGraph topology consistent with the PRD's 6 stages and the platform's
 checkpoint-per-node rule. Update this file whenever the graph topology actually changes —
 it's the map Claude (and you) should trust over re-deriving it from code each time.
 
-## M1 implemented subgraph
+## M1 + M3a implemented subgraph
 
-As of M1 (`app/graph/compile.py`), only the planning slice is wired:
+As of M3a (`app/graph/compile.py`):
 
 ```
-plan_story → lock_continuity_bible → END
+plan_story → lock_continuity_bible
+  → [FEATURE_SHOT_GENERATION off] → END (API BIBLE_LOCKED)
+  → [flag on]
+       generate_shot_1 → chain_frame_1
+       → … through shot/frame 4 → END (API SHOTS_READY)
 ```
 
-- Both nodes checkpoint; the runner maps harness `SUCCESS` → API status `BIBLE_LOCKED`.
-- `generate_shot` through `deliver` below are **not yet implemented** — the compiled graph
-  ends at `lock_continuity_bible`.
-- See `docs/superpowers/specs/2026-08-03-m1-job-lifecycle-design.md` and
-  `docs/superpowers/plans/2026-08-03-m1-job-lifecycle.md` for the shipped M1 scope.
+- Planning nodes checkpoint; when the shot flag is off the runner maps harness
+  `SUCCESS` → `BIBLE_LOCKED`.
+- When the shot flag is on, sequential generate+chain runs for beats 1–4; final
+  success maps to `SHOTS_READY`. Clips/frames land under `MEDIA_ROOT`.
+- Provider calls go through `VideoProvider` (Higgsfield MCP adapter or fake) —
+  never direct MCP from nodes (`ADR-0004`).
+- `qc_score`, `repair_shot`, `assemble`, and `deliver` are **not yet wired**.
+- Specs: `docs/superpowers/specs/2026-08-03-m1-job-lifecycle-design.md`,
+  `docs/superpowers/specs/2026-08-07-m3a-shot-generation-design.md`.
 
 ## Full graph topology (text form)
 

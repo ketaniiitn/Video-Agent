@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 TERMINAL_STATUSES = frozenset(
     {
         JobStatus.BIBLE_LOCKED,
+        JobStatus.SHOTS_READY,
         JobStatus.PARTIAL,
         JobStatus.FAILED,
         JobStatus.FAILED_NO_PROGRESS,
@@ -110,6 +111,8 @@ async def run_locked_job(
         raise
 
     status = _OUTCOME_TO_STATUS.get(result.get("outcome"))
+    if result.get("shots_completed") and result.get("outcome") == "SUCCESS":
+        status = JobStatus.SHOTS_READY
     if status is not None:
         await _set_status(session_factory, tenant_id, job_id, status)
     if status in TERMINAL_STATUSES:

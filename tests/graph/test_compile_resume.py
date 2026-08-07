@@ -7,6 +7,7 @@ from sqlalchemy import select
 from app.db.models import ContinuityBibleRow, Job, StoryPlanRow
 from app.domain.errors import AppError
 from app.domain.schemas import JobStatus
+from app.config import Settings
 from app.gateway.client import FakeGateway, Usage
 from app.graph.compile import build_graph
 
@@ -75,6 +76,7 @@ async def test_resume_continues_after_committed_story_plan(node_db):
         MemorySaver(),
         gateway=gateway,
         session_factory=session_factory,
+        settings=Settings(_env_file=None, feature_shot_generation=False),
     )
     config = {
         "configurable": {
@@ -123,6 +125,7 @@ async def test_next_node_reloads_usage_and_stops_at_tiny_usd_cap(node_db):
         MemorySaver(),
         gateway=gateway,
         session_factory=session_factory,
+        settings=Settings(_env_file=None, feature_shot_generation=False),
     )
     config = {
         "configurable": {

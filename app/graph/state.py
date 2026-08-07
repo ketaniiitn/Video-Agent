@@ -18,3 +18,7 @@ class VideoAgentState(TypedDict):
     budget_max_wall_clock_seconds: int
     started_at_iso: str
     outcome: NotRequired[Literal["SUCCESS", "PARTIAL", "FAILED"]]
+    prior_frame_path: NotRequired[str | None]
+    current_clip_path: NotRequired[str | None]
+    current_beat_index: NotRequired[int]
+    shots_completed: NotRequired[bool]

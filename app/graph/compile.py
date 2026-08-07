@@ -10,11 +10,15 @@ from langgraph.graph import END, START, StateGraph
 from app.config import Settings
 from app.gateway.protocols import GatewayClient
 from app.graph.state import VideoAgentState
+from app.nodes.chain_frame import make_chain_frame_node
+from app.nodes.generate_shot import make_generate_shot_node
 from app.nodes.lock_continuity_bible import (
     SessionFactory,
     lock_continuity_bible_node,
 )
 from app.nodes.plan_story import plan_story_node
+from app.providers.protocols import VideoProvider
+from app.providers.registry import build_provider
 
 _checkpoint_tenant_id: ContextVar[str | None] = ContextVar(
     "checkpoint_tenant_id", default=None
@@ -138,7 +142,14 @@ async def build_graph(
     *,
     gateway: GatewayClient,
     session_factory: SessionFactory,
+    settings: Settings | None = None,
+    provider: VideoProvider | None = None,
 ):
+    settings = settings or Settings(_env_file=None)
+    provider = provider or build_provider(settings)
+    media_root = settings.media_root
+    shot_generation = settings.feature_shot_generation
+
     graph = StateGraph(VideoAgentState)
     graph.add_node(
         "plan_story",
@@ -156,6 +167,25 @@ async def build_graph(
             session_factory=session_factory,
         ),
     )
+    for beat_index in range(1, 5):
+        graph.add_node(
+            f"generate_shot_{beat_index}",
+            make_generate_shot_node(
+                beat_index,
+                provider=provider,
+                session_factory=session_factory,
+                media_root=media_root,
+            ),
+        )
+        graph.add_node(
+            f"chain_frame_{beat_index}",
+            make_chain_frame_node(
+                beat_index,
+                session_factory=session_factory,
+                media_root=media_root,
+            ),
+        )
+
     graph.add_edge(START, "plan_story")
     graph.add_conditional_edges(
         "plan_story",
@@ -165,7 +195,35 @@ async def build_graph(
             "end": END,
         },
     )
-    graph.add_edge("lock_continuity_bible", END)
+    graph.add_conditional_edges(
+        "lock_continuity_bible",
+        lambda state: _after_bible(state, shot_generation=shot_generation),
+        {
+            "generate_shot_1": "generate_shot_1",
+            "end": END,
+        },
+    )
+    for beat_index in range(1, 5):
+        graph.add_conditional_edges(
+            f"generate_shot_{beat_index}",
+            _after_generate,
+            {
+                f"chain_frame_{beat_index}": f"chain_frame_{beat_index}",
+                "end": END,
+            },
+        )
+        if beat_index < 4:
+            graph.add_conditional_edges(
+                f"chain_frame_{beat_index}",
+                _after_chain,
+                {
+                    f"generate_shot_{beat_index + 1}": f"generate_shot_{beat_index + 1}",
+                    "end": END,
+                },
+            )
+        else:
+            graph.add_edge(f"chain_frame_{beat_index}", END)
+
     return graph.compile(checkpointer=checkpointer)
 
 
@@ -173,6 +231,30 @@ def _after_plan(state: VideoAgentState) -> str:
     if state.get("outcome") in {"PARTIAL", "FAILED"}:
         return "end"
     return "lock_continuity_bible"
+
+
+def _after_bible(state: VideoAgentState, *, shot_generation: bool) -> str:
+    if state.get("outcome") in {"PARTIAL", "FAILED"}:
+        return "end"
+    if shot_generation:
+        return "generate_shot_1"
+    return "end"
+
+
+def _after_generate(state: VideoAgentState) -> str:
+    if state.get("outcome") in {"PARTIAL", "FAILED"}:
+        return "end"
+    beat = int(state.get("current_beat_index") or 1)
+    return f"chain_frame_{beat}"
+
+
+def _after_chain(state: VideoAgentState) -> str:
+    if state.get("outcome") in {"PARTIAL", "FAILED"}:
+        return "end"
+    beat = int(state.get("current_beat_index") or 1)
+    if beat >= 4:
+        return "end"
+    return f"generate_shot_{beat + 1}"
 
 
 @asynccontextmanager

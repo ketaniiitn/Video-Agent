@@ -34,13 +34,14 @@ from app.cache.idempotency import (
 )
 from app.cache.locks import release_job_lock, try_acquire_job_lock
 from app.cache.progress import write_progress
-from app.db.models import ContinuityBibleRow, Job, StoryPlanRow
+from app.db.models import ContinuityBibleRow, Job, Shot, StoryPlanRow
 from app.domain.errors import AppError
 from app.domain.schemas import (
     BudgetCaps,
     ContinuityBible,
     CreateJobRequest,
     JobStatus,
+    ShotSummary,
     StoryPlan,
 )
 from app.jobs.runner import (
@@ -71,6 +72,7 @@ class JobDetailResponse(BaseModel):
     budget_max_wall_clock_seconds: int
     story_plan: StoryPlan | None = None
     continuity_bible: ContinuityBible | None = None
+    shots: list[ShotSummary] = []
 
 
 class ResumeResponse(BaseModel):
@@ -207,6 +209,13 @@ async def get_job(
                 ContinuityBibleRow.tenant_id == tenant_id,
             )
         )
+        shot_rows = (
+            await session.execute(
+                select(Shot)
+                .where(Shot.job_id == job_id, Shot.tenant_id == tenant_id)
+                .order_by(Shot.beat_index)
+            )
+        ).scalars().all()
 
     return JobDetailResponse(
         job_id=job.id,
@@ -222,6 +231,16 @@ async def get_job(
         continuity_bible=(
             ContinuityBible.model_validate(bible_row.bible_json) if bible_row else None
         ),
+        shots=[
+            ShotSummary(
+                beat_index=row.beat_index,
+                status=row.status,
+                clip_path=row.clip_path,
+                frame_path=row.frame_path,
+                cost_usd=row.cost_usd,
+            )
+            for row in shot_rows
+        ],
     )
 
 

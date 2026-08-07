@@ -24,6 +24,7 @@ from app.gateway.client import build_gateway
 from app.graph.compile import build_graph, postgres_checkpointer
 from app.jobs.runner import drain_background_tasks, sweep_stale_jobs
 from app.observability.tracing import current_trace_id, mint_trace_id
+from app.providers.registry import build_provider
 
 
 @asynccontextmanager
@@ -54,11 +55,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         stack.push_async_callback(redis.aclose)
 
         gateway = build_gateway(settings)
+        provider = build_provider(settings)
         checkpointer = await stack.enter_async_context(postgres_checkpointer(settings))
 
         session_factory = partial(get_session, sessionmaker=sessionmaker)
         graph = await build_graph(
-            checkpointer, gateway=gateway, session_factory=session_factory
+            checkpointer,
+            gateway=gateway,
+            session_factory=session_factory,
+            settings=settings,
+            provider=provider,
         )
 
         app.state.app_state = AppState(

@@ -136,15 +136,26 @@ async def build_test_app(
     *,
     gateway: FakeGateway | None = None,
     feature_story_planning: bool = True,
+    feature_shot_generation: bool = False,
+    settings: Settings | None = None,
+    provider=None,
 ) -> TestApp:
     maker = await make_db_maker()
     tenant_a, tenant_b = await make_tenants(maker)
     gateway = gateway or default_gateway()
-    settings = Settings(feature_story_planning=feature_story_planning)
+    settings = settings or Settings(
+        _env_file=None,
+        feature_story_planning=feature_story_planning,
+        feature_shot_generation=feature_shot_generation,
+    )
     redis = fakeredis.aioredis.FakeRedis()
     session_factory = session_factory_for(maker)
     graph = await build_graph(
-        MemorySaver(), gateway=gateway, session_factory=session_factory
+        MemorySaver(),
+        gateway=gateway,
+        session_factory=session_factory,
+        settings=settings,
+        provider=provider,
     )
     state = AppState(
         settings=settings,
