@@ -9,10 +9,14 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.config import Settings
 from app.db.models import Base
+from app.db.urls import to_asyncpg_url
 
 
 config = context.config
-database_url = os.getenv("TEST_DATABASE_URL", Settings().database_url)
+raw_url = os.getenv("TEST_DATABASE_URL") or Settings().database_url
+database_url = to_asyncpg_url(raw_url)
+if not database_url:
+    raise RuntimeError("DATABASE_URL (or TEST_DATABASE_URL) is required for Alembic")
 config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 
 if config.config_file_name is not None:

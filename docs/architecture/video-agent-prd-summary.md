@@ -62,8 +62,16 @@ prompt (every job reproducible).
 
 ## Milestones
 
-M1–M2 job lifecycle, planning, continuity bible · M3 Higgsfield MCP, frame chaining,
-assembly · M4 QC loop, partial results, resume · M5 observability, cost caps, load + chaos.
+| Milestone | PRD scope | Repo status |
+|---|---|---|
+| M1 | Job lifecycle, planning, continuity bible | **Done** — idempotency, RLS, checkpoints, API |
+| M3a | Higgsfield MCP, sequential generation, frame chaining | **Done** — provider abstraction, shot persistence |
+| M3b | Assembly, presigned delivery | **Done** — ffmpeg stitch, HMAC local URLs, artifacts API |
+| M4 | QC loop, partial results, resume | **Done** — vision QC, ≤2 repairs, `PARTIAL` / degraded |
+| M5 | Observability, cost caps, load + chaos | **Done** — JSON logs, Langfuse optional, CI gates, chaos tests |
+
+Not yet built (post-v1 candidates): cloud object storage, separate worker process, music bed
+in assemble, 10% prompt rollout, job listing API, production auth.
 
 ## Out of scope (v1)
 

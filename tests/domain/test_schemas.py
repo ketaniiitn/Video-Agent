@@ -1,7 +1,16 @@
+from decimal import Decimal
+
 import pytest
 from pydantic import ValidationError
 
-from app.domain.schemas import Beat, ContinuityBible, JobStatus, StoryPlan
+from app.domain.schemas import (
+    Beat,
+    ContinuityBible,
+    JobStatus,
+    ShotStatus,
+    ShotSummary,
+    StoryPlan,
+)
 
 
 def test_story_plan_requires_four_beats_of_ten_seconds():
@@ -57,11 +66,34 @@ def test_job_status_includes_all_harness_mapped_values():
         "QUEUED",
         "RUNNING",
         "BIBLE_LOCKED",
+        "SHOTS_READY",
+        "DELIVERED",
         "PARTIAL",
         "FAILED",
         "FAILED_NO_PROGRESS",
         "ESCALATED",
     }
+
+
+def test_shot_status_and_summary_fields():
+    assert {status.value for status in ShotStatus} == {
+        "PENDING",
+        "RUNNING",
+        "SUCCEEDED",
+        "FAILED",
+    }
+
+    summary = ShotSummary(
+        beat_index=1,
+        status=ShotStatus.SUCCEEDED,
+        clip_path="/media/shot_1.mp4",
+        frame_path="/media/frame_1.jpg",
+        cost_usd=Decimal("0.125000"),
+    )
+
+    assert summary.beat_index == 1
+    assert summary.status is ShotStatus.SUCCEEDED
+    assert summary.cost_usd == Decimal("0.125000")
 
 
 def test_continuity_bible_fields():

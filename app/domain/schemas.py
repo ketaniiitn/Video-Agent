@@ -1,3 +1,4 @@
+from decimal import Decimal
 from enum import Enum
 
 from pydantic import BaseModel, field_validator
@@ -7,10 +8,29 @@ class JobStatus(str, Enum):
     QUEUED = "QUEUED"
     RUNNING = "RUNNING"
     BIBLE_LOCKED = "BIBLE_LOCKED"
+    SHOTS_READY = "SHOTS_READY"
+    DELIVERED = "DELIVERED"
     PARTIAL = "PARTIAL"
     FAILED = "FAILED"
     FAILED_NO_PROGRESS = "FAILED_NO_PROGRESS"
     ESCALATED = "ESCALATED"
+
+
+class ShotStatus(str, Enum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
+class ShotSummary(BaseModel):
+    beat_index: int
+    status: ShotStatus
+    clip_path: str | None
+    frame_path: str | None
+    cost_usd: Decimal
+    qc_score: Decimal | None = None
+    degraded: bool = False
 
 
 BEAT_NAMES = ("setup", "development", "turn", "resolution")
@@ -55,6 +75,18 @@ class BudgetCaps(BaseModel):
     budget_max_tokens: int = 50_000
     budget_max_iterations: int = 20
     budget_max_wall_clock_seconds: int = 600
+
+
+class QcScoreResult(BaseModel):
+    score: float
+    rationale: str = ""
+
+    @field_validator("score")
+    @classmethod
+    def validate_score(cls, score: float) -> float:
+        if not 0.0 <= score <= 1.0:
+            raise ValueError("QC score must be between 0 and 1")
+        return score
 
 
 class CreateJobRequest(BaseModel):

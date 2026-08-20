@@ -1,7 +1,7 @@
 # M1 Job Lifecycle + Story Planning + Continuity Bible — Design
 
 **Date:** 2026-08-03  
-**Status:** Approved for implementation planning  
+**Status:** Implemented  
 **Scope:** M1 only (PRD milestones M1–M2 planning slice): job API, `plan_story`, `lock_continuity_bible`. Shot generation, QC, assemble, and Higgsfield are out of scope.
 
 ## Decisions locked in brainstorming

@@ -7,7 +7,7 @@ from app.gateway.client import LiteLLMGateway, Usage, build_gateway
 
 @pytest.mark.asyncio
 async def test_stub_returns_story_plan_fixture():
-    settings = Settings(litellm_proxy_url="")
+    settings = Settings(_env_file=None, litellm_proxy_url="")
     gw = build_gateway(settings)
     data, usage = await gw.complete_json(
         "reasoning-high",

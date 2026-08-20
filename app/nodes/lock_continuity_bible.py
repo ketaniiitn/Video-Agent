@@ -11,16 +11,20 @@ from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import logging
+
 from app.db.models import ContinuityBibleRow, Job
 from app.domain.errors import AppError
 from app.domain.schemas import ContinuityBible, JobStatus
 from app.gateway.protocols import GatewayClient, Usage
 from app.graph.budgets import BudgetExceeded, check_budget
 from app.graph.state import VideoAgentState
+from app.observability.logging import log_json
 from app.prompts.registry import get_prompt
 
 SessionFactory = Callable[[UUID], AbstractAsyncContextManager[AsyncSession]]
 _SCHEMA_ATTEMPTS = 3
+logger = logging.getLogger(__name__)
 
 
 async def lock_continuity_bible_node(
@@ -101,6 +105,7 @@ async def lock_continuity_bible_node(
         )
         job.status = JobStatus.BIBLE_LOCKED
         await session.commit()
+        log_json(logger, "bible_locked", job_id=str(job_id))
         return {
             "continuity_bible": bible.model_dump(mode="json"),
             "outcome": "SUCCESS",

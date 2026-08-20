@@ -27,10 +27,11 @@ from sqlalchemy import select
 from app.api.deps import SessionFactory
 from app.cache.locks import release_job_lock, try_acquire_job_lock
 from app.cache.progress import clear_progress
-from app.db.models import Job
+from app.db.models import Job, Tenant
 from app.domain.errors import AppError
 from app.domain.schemas import JobStatus
 from app.gateway.protocols import GatewayClient
+from app.observability.logging import log_json
 
 if TYPE_CHECKING:
     from app.api.deps import AppState
@@ -40,6 +41,8 @@ logger = logging.getLogger(__name__)
 TERMINAL_STATUSES = frozenset(
     {
         JobStatus.BIBLE_LOCKED,
+        JobStatus.SHOTS_READY,
+        JobStatus.DELIVERED,
         JobStatus.PARTIAL,
         JobStatus.FAILED,
         JobStatus.FAILED_NO_PROGRESS,
@@ -100,6 +103,12 @@ async def run_locked_job(
         session_factory, tenant_id, job_id, needs_initial_state=not has_checkpoint
     )
     try:
+        log_json(
+            logger,
+            "job_invoke_start",
+            job_id=str(job_id),
+            tenant_id=str(tenant_id),
+        )
         result = await graph.ainvoke(initial_state, config)
     except AppError:
         # Nodes already persist JobStatus.FAILED before raising SCHEMA_INVALID;
@@ -108,10 +117,30 @@ async def run_locked_job(
         await _ensure_terminal(session_factory, tenant_id, job_id, JobStatus.FAILED)
         await clear_progress(redis, job_id)
         raise
+    except Exception:
+        await _ensure_terminal(session_factory, tenant_id, job_id, JobStatus.FAILED)
+        await clear_progress(redis, job_id)
+        raise
 
     status = _OUTCOME_TO_STATUS.get(result.get("outcome"))
+    if result.get("delivered"):
+        if result.get("outcome") == "SUCCESS":
+            status = JobStatus.DELIVERED
+        elif result.get("outcome") == "PARTIAL":
+            status = JobStatus.PARTIAL
+    elif result.get("shots_completed") and result.get("outcome") == "SUCCESS":
+        status = JobStatus.SHOTS_READY
     if status is not None:
         await _set_status(session_factory, tenant_id, job_id, status)
+    log_json(
+        logger,
+        "job_invoke_finished",
+        job_id=str(job_id),
+        status=getattr(status, "value", status),
+        outcome=result.get("outcome"),
+        shots_completed=bool(result.get("shots_completed")),
+        delivered=bool(result.get("delivered")),
+    )
     if status in TERMINAL_STATUSES:
         await clear_progress(redis, job_id)
 
@@ -119,33 +148,36 @@ async def run_locked_job(
 async def sweep_stale_jobs(state: "AppState") -> list[asyncio.Task]:
     """Find non-terminal jobs (crashed mid-run) and reschedule each.
 
-    Reads through ``state.sweep_session_factory`` — a privileged,
-    cross-tenant session used only to discover ``(id, tenant_id)`` pairs.
-    Every subsequent read/write for a given job goes through the normal
-    tenant-scoped ``state.session_factory`` inside ``run_job``.
+    Lists tenants without RLS, then reads stale jobs through a normal
+    tenant-scoped session. That works on Neon (no BYPASSRLS role).
     """
     async with state.sweep_session_factory() as session:
-        rows = (
-            await session.execute(
-                select(Job.id, Job.tenant_id).where(Job.status.in_(_STALE_STATUSES))
-            )
-        ).all()
+        tenant_ids = list(
+            (await session.execute(select(Tenant.id))).scalars().all()
+        )
 
     tasks: list[asyncio.Task] = []
-    for job_id, tenant_id in rows:
-        tasks.append(
-            schedule_background_task(
-                state,
-                run_job(
-                    job_id=job_id,
-                    tenant_id=tenant_id,
-                    redis=state.redis,
-                    session_factory=state.session_factory,
-                    graph=state.graph,
-                    gateway=state.gateway,
+    for tenant_id in tenant_ids:
+        async with state.session_factory(tenant_id) as session:
+            rows = (
+                await session.execute(
+                    select(Job.id, Job.tenant_id).where(Job.status.in_(_STALE_STATUSES))
+                )
+            ).all()
+        for job_id, job_tenant_id in rows:
+            tasks.append(
+                schedule_background_task(
+                    state,
+                    run_job(
+                        job_id=job_id,
+                        tenant_id=job_tenant_id,
+                        redis=state.redis,
+                        session_factory=state.session_factory,
+                        graph=state.graph,
+                        gateway=state.gateway,
+                    )
                 )
             )
-        )
     return tasks
 
 

@@ -5,8 +5,11 @@ M1 application schema and the LangGraph checkpoint schema.
 `002_expand_tenant_aware_job_fks` adds tenant-aware job references without
 removing the original constraints. `003_rls_nullif_tenant_setting` hardens RLS
 policies against an empty `app.tenant_id` setting on pooled connections.
+`004_m3a_shots` expands the job lifecycle and adds shot-generation persistence.
+`005_m3b_m4_m5` adds `DELIVERED`, QC scores, delivery columns, and per-shot
+degraded/repair fields.
 
-## M1 application tables
+## Application tables
 
 - `tenants`: `id`, `name`, `created_at`. This is the tenant identity root and is
   accessed only by privileged provisioning code; it does not contain a `tenant_id`.
@@ -15,20 +18,35 @@ policies against an empty `app.tenant_id` setting on pooled connections.
   (`usd`, `tokens`, `iterations`, `wall_clock_seconds`), and
   `budget_used_usd`, `budget_used_tokens`, and `budget_used_iterations`.
   `status` is the native `job_status` enum:
-  `QUEUED`, `RUNNING`, `BIBLE_LOCKED`, `PARTIAL`, `FAILED`,
-  `FAILED_NO_PROGRESS`, `ESCALATED`.
+  `QUEUED`, `RUNNING`, `BIBLE_LOCKED`, `SHOTS_READY`, `DELIVERED`, `PARTIAL`, `FAILED`,
+  `FAILED_NO_PROGRESS`, `ESCALATED`. Jobs also carry `degraded`, nullable
+  `assembled_path`, `download_url`, and `thumbnail_url`.
 - `story_plans`: `id`, `tenant_id`, unique `job_id`, `beats_json`, `created_at`.
 - `continuity_bibles`: `id`, `tenant_id`, unique `job_id`, `bible_json`,
   nullable `locked_at`, `created_at`.
 - `idempotency_keys`: `id`, `tenant_id`, `key`, `request_hash`, `job_id`,
   `created_at`, `expires_at`. `(tenant_id, key)` is unique, making durable
   work creation idempotent per tenant.
+- `shots`: `id`, `tenant_id`, `job_id`, `beat_index`, `status`,
+  `attempt_count`, nullable `clip_path`, nullable `frame_path`, `cost_usd`,
+  `provider_id`, nullable `seed`, `prompt`, `created_at`, and `updated_at`.
+  `(job_id, beat_index)` is unique, `beat_index` is constrained to 1–4, and
+  `status` is the native `shot_status` enum: `PENDING`, `RUNNING`,
+  `SUCCEEDED`, `FAILED`. Shots also store nullable `qc_score`, `degraded`,
+  and `repair_count`.
+- `qc_scores`: `id`, `tenant_id`, `job_id`, nullable `shot_id`, `beat_index`,
+  `attempt`, `score`, `rationale`, `created_at`; composite FK
+  `(job_id, tenant_id)`; RLS. One row per QC attempt.
+- `cost_ledger`: `id`, `tenant_id`, `job_id`, nullable `shot_id`, `usd`,
+  nullable `tokens`, `provider_id`, and `created_at`. It records provider cost
+  entries at job or shot granularity.
 
 Foreign keys from tenant data use `ON DELETE CASCADE`. Jobs expose unique
 `(id, tenant_id)` reference columns. Story plans, continuity bibles, and
-idempotency keys reference jobs through `(job_id, tenant_id)`, preventing a
-tenant-owned row from pointing at another tenant's job. Story plans and
-continuity bibles are one-to-one with jobs.
+idempotency keys, shots, QC scores, and cost ledger entries reference jobs through
+`(job_id, tenant_id)`, preventing a tenant-owned row from pointing at another
+tenant's job. Cost ledger shot references become null if a shot is removed.
+Story plans and continuity bibles are one-to-one with jobs.
 
 ## Checkpoint tables
 
@@ -68,6 +86,5 @@ this DSN or role.
 
 ## Deferred
 
-`shots`, `qc_scores`, and `cost_ledger` arrive with later M1 pipeline tasks.
 Vector storage remains deferred by ADR-0005 because Video Agent v1 has no
 semantic-search requirement.

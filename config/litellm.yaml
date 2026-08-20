@@ -1,0 +1,32 @@
+# Local LiteLLM proxy config (gateway only — Video Agent never imports providers).
+# Maps the app's logical aliases to a free Google AI Studio Gemini key.
+#
+# Start (separate terminal from uvicorn — do not use the app .venv):
+#   export GEMINI_API_KEY=...   # https://aistudio.google.com/apikey
+#   ./scripts/run_litellm.sh
+#
+# Then in .env:
+#   LITELLM_PROXY_URL=http://127.0.0.1:4000
+#   LITELLM_MASTER_KEY=
+
+model_list:
+  - model_name: reasoning-high
+    litellm_params:
+      model: gemini/gemini-3.6-flash
+      api_key: os.environ/GEMINI_API_KEY
+  - model_name: reasoning-fast
+    litellm_params:
+      model: gemini/gemini-3.6-flash
+      api_key: os.environ/GEMINI_API_KEY
+  - model_name: vision-default
+    litellm_params:
+      model: gemini/gemini-3.6-flash
+      api_key: os.environ/GEMINI_API_KEY
+
+litellm_settings:
+  drop_params: true
+
+# No Prisma / spend DB. Video Agent's DATABASE_URL is Neon and must not be used here.
+general_settings:
+  disable_spend_logs: true
+

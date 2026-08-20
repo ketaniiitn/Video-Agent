@@ -14,6 +14,7 @@ def test_outcome_to_status_maps_failed_no_progress():
     ``None`` and leaving the job stuck at RUNNING.
     """
     assert _OUTCOME_TO_STATUS["FAILED_NO_PROGRESS"] is JobStatus.FAILED_NO_PROGRESS
+    assert JobStatus.DELIVERED.value == "DELIVERED"
 
 
 @pytest.mark.asyncio

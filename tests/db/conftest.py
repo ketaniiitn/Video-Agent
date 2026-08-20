@@ -7,12 +7,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 
-# Local PostgreSQL:
-# docker run --rm --name video-agent-test-db -e POSTGRES_PASSWORD=postgres \
-#   -e POSTGRES_DB=video_agent_test -p 5433:5432 postgres:16
-# Then run:
-# TEST_DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5433/video_agent_test \
-#   alembic upgrade head && TEST_DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5433/video_agent_test pytest tests/db -v
+# Any PostgreSQL 16+ reachable at TEST_DATABASE_URL (Neon is fine). Example:
+#   TEST_DATABASE_URL=postgresql+asyncpg://USER:PASSWORD@HOST/DB?ssl=require \
+#     alembic upgrade head && pytest tests/db -v
 @pytest_asyncio.fixture
 async def db_engine():
     database_url = os.getenv("TEST_DATABASE_URL")

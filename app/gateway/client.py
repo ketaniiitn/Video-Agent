@@ -8,6 +8,7 @@ from typing import Protocol, TYPE_CHECKING
 import httpx
 
 from app.domain.errors import AppError
+from app.gateway.circuit import CircuitBreaker
 
 if TYPE_CHECKING:
     from app.config import Settings
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
 class Usage:
     usd: float
     tokens: int
+    degraded: bool = False
 
 
 class _Transport(Protocol):
@@ -31,9 +33,11 @@ class FakeGateway:
         self,
         responses: dict[str, dict] | None = None,
         usage: Usage | None = None,
+        queues: dict[str, list[dict]] | None = None,
     ):
         self.responses = responses or {}
         self.usage = usage or Usage(usd=0.0, tokens=0)
+        self.queues = {key: list(value) for key, value in (queues or {}).items()}
 
     async def complete_json(
         self,
@@ -42,6 +46,8 @@ class FakeGateway:
         schema_name: str,
     ) -> tuple[dict, Usage]:
         del alias, messages
+        if schema_name in self.queues and self.queues[schema_name]:
+            return self.queues[schema_name].pop(0), self.usage
         if schema_name not in self.responses:
             raise AppError(
                 "GATEWAY_FAKE_RESPONSE_MISSING",
@@ -133,37 +139,84 @@ class _LiteLLMTransport:
 
 
 class LiteLLMGateway:
-    def __init__(self, transport: _Transport, max_attempts: int = 3):
+    def __init__(
+        self,
+        transport: _Transport,
+        max_attempts: int = 3,
+        *,
+        fallbacks: dict[str, str] | None = None,
+    ):
         if not 1 <= max_attempts <= 3:
             raise ValueError("max_attempts must be between 1 and 3")
         self.transport = transport
         self.max_attempts = max_attempts
+        self.fallbacks = fallbacks or {}
+        self._breakers: dict[str, CircuitBreaker] = {}
+        self._cache: dict[tuple[str, str], dict] = {}
+
+    def _breaker(self, alias: str) -> CircuitBreaker:
+        if alias not in self._breakers:
+            self._breakers[alias] = CircuitBreaker()
+        return self._breakers[alias]
 
     async def complete_json(
         self,
         alias: str,
         messages: list[dict],
         schema_name: str,
+        _tried_fallback: bool = False,
     ) -> tuple[dict, Usage]:
-        del schema_name
+        breaker = self._breaker(alias)
+        if not breaker.allow():
+            return self._degrade_or_open(alias, schema_name)
+
+        last_error: AppError | None = None
         for attempt in range(1, self.max_attempts + 1):
             try:
-                return await self.transport.post_chat(alias, messages)
+                data, usage = await self.transport.post_chat(alias, messages)
+                breaker.record_success()
+                self._cache[(alias, schema_name)] = data
+                return data, usage
             except AppError as exc:
+                last_error = exc
                 if exc.code != "GATEWAY_RETRYABLE":
+                    breaker.record_failure()
                     raise
+                breaker.record_failure()
                 if attempt == self.max_attempts:
-                    raise AppError(
-                        "GATEWAY_EXHAUSTED",
-                        (
-                            "LiteLLM proxy retries exhausted; no completion was "
-                            "produced. Retry the job after the dependency recovers."
-                        ),
-                        http_status=502,
-                    ) from exc
+                    break
                 backoff = 0.1 * (2 ** (attempt - 1))
                 await asyncio.sleep(backoff + random.uniform(0, backoff))
-        raise RuntimeError("unreachable")
+
+        fallback = self.fallbacks.get(alias)
+        if fallback and fallback != alias and not _tried_fallback:
+            return await self.complete_json(
+                fallback, messages, schema_name, _tried_fallback=True
+            )
+        cached = self._cache.get((alias, schema_name))
+        if cached is not None:
+            return cached, Usage(usd=0.0, tokens=0, degraded=True)
+        raise AppError(
+            "GATEWAY_EXHAUSTED",
+            (
+                "LiteLLM proxy retries exhausted; no completion was "
+                "produced. Retry the job after the dependency recovers."
+            ),
+            http_status=502,
+        ) from last_error
+
+    def _degrade_or_open(self, alias: str, schema_name: str) -> tuple[dict, Usage]:
+        cached = self._cache.get((alias, schema_name))
+        if cached is not None:
+            return cached, Usage(usd=0.0, tokens=0, degraded=True)
+        raise AppError(
+            "GATEWAY_CIRCUIT_OPEN",
+            (
+                f"Gateway circuit open for alias {alias}; no cached completion "
+                "was preserved. Retry the job after the dependency recovers."
+            ),
+            http_status=503,
+        )
 
 
 def build_gateway(settings: "Settings") -> "GatewayClient":
@@ -176,4 +229,5 @@ def build_gateway(settings: "Settings") -> "GatewayClient":
             api_key=settings.litellm_master_key,
         ),
         max_attempts=3,
+        fallbacks=settings.gateway_fallback_aliases,
     )

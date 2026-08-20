@@ -1,0 +1,8 @@
+"""Single source for QC/repair caps used by nodes, edges, and eval gates."""
+
+QC_PASS_THRESHOLD = 0.75
+MAX_REPAIR_ATTEMPTS = 2
+CIRCUIT_FAILURE_THRESHOLD = 5
+CIRCUIT_WINDOW_SECONDS = 30.0
+EVAL_REGRESSION_LIMIT = 0.03
+COST_REGRESSION_LIMIT = 0.20

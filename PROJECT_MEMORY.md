@@ -14,6 +14,25 @@ platform; this repo builds Video Agent only. See `docs/architecture/*-summary.md
 condensed specs, and the two source PDFs (`Guidelines.pdf`, `Video-Agent.pdf`, both v1.0,
 2 Aug 2026) for the originals if anything here seems to drift from them.
 
+## Implementation status (Aug 2026)
+
+**M1–M5 are implemented.** The LangGraph pipeline runs end-to-end when all feature flags
+are on:
+
+- Story planning + continuity bible lock (M1)
+- Sequential shot generation + frame chaining via Higgsfield MCP (M3a)
+- ffmpeg assemble + HMAC presigned local download URLs (M3b)
+- Vision QC scoring + bounded repair (≤2 per shot) + degraded flagging (M4)
+- JSON logging, optional Langfuse, gateway circuit/fallback/degrade, CI eval gates (M5)
+- Local test console at `GET /` (same-origin dev UI)
+
+Jobs run **in-process** (asyncio background tasks in the FastAPI app). No Celery/RQ worker.
+Media is stored on **local disk** (`MEDIA_ROOT`); cloud object storage is not wired yet.
+
+Local LLM dev uses `scripts/openai_compat_proxy.py` (Gemini via OpenAI-compatible HTTP),
+started by `./scripts/run_litellm.sh`. Do not use the LiteLLM CLI with this repo's `.env`
+— it treats Neon `DATABASE_URL` as Prisma config.
+
 ## How this repo is set up for Cursor
 
 - `.cursor/rules/00`–`04` are always-applied — every non-negotiable, the model-routing
@@ -38,15 +57,21 @@ condensed specs, and the two source PDFs (`Guidelines.pdf`, `Video-Agent.pdf`, b
   aren't part of this repo.
 - ADR-0005 deliberately defers vector storage — don't add pgvector/Mongo Atlas speculatively.
 - M1 prompt registry is a local name+version fallback in `app/prompts/registry.py`
-  when Langfuse credentials are unset — deliberate interim vs `18-prompt-engineering.mdc`.
-  Switch when `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are configured.
-- M1 gateway resilience deliberately implements failure-ladder rung 1 (retry) and rung 5
-  (fail honestly) only while each logical alias has a single configured target. Add rungs
-  2–4 (same-alias fallback, circuit break, and explicit degradation) when a second target
-  exists for an alias; do not invent cross-alias fallback in application code.
+  when Langfuse credentials are unset — it tries the Langfuse prompt API first
+  when `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are configured.
+- Gateway resilience implements rungs 1–5: retry (max 3), same-alias fallback
+  from `GATEWAY_FALLBACK_ALIASES` only, per-alias circuit (5 failures / 30s),
+  cached-JSON degrade when the circuit is open, then typed `AppError`. Do not
+  invent cross-alias fallback in application code.
+- Feature flags gate graph wiring: `FEATURE_STORY_PLANNING`, `FEATURE_SHOT_GENERATION`,
+  `FEATURE_QC_REPAIR`, `FEATURE_ASSEMBLE_DELIVER`. Config validation is flag-aware.
+- CI (`.github/workflows/ci.yml`) runs unit tests + eval/cost gates on every push/PR.
+- Alembic migrations through `005_m3b_m4_m5` own the current schema including QC scores,
+  delivery columns, and per-shot repair/degraded fields.
 
 ## Update this file when
 
 - A platform non-negotiable changes (rare — should come with a spec version bump).
 - The repo's scope changes (e.g. Sales/SQL agents get added to this repo).
-- A standing assumption above stops being true (e.g. a second engineer joins).
+- A standing assumption above stops being true (e.g. a second engineer joins, or a major
+  milestone ships).
