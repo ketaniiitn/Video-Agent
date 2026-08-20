@@ -57,3 +57,14 @@ idempotency keys on every work-creating POST · untrusted content never issues i
 · CI gates on eval regression >3% and cost regression >20% · migrations are
 expand/contract, applied before deploy · every new agent behaviour behind a feature flag ·
 model/prompt changes go to 10% of traffic first, promoted only after Langfuse scores hold.
+
+## Video Agent repo (Aug 2026)
+
+This repo implements the platform patterns above for the Video Agent product. Current
+status: M1–M5 complete (see `README.md`). Deliberate gaps vs the full platform spec:
+
+- Vector storage deferred (ADR-0005) — no pgvector/Mongo in this repo
+- Jobs run in-process, not a separate worker queue
+- Object storage is local disk; cloud bucket adapter not wired
+- Auth is tenant header only; no API keys or OAuth yet
+- Prompt rollout is feature-flag on/off, not 10% traffic splitting

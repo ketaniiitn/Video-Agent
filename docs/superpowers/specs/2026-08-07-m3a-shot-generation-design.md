@@ -1,7 +1,7 @@
 # M3a Shot Generation + Frame Chaining — Design
 
 **Date:** 2026-08-07  
-**Status:** Approved for implementation  
+**Status:** Implemented  
 **Scope:** M3a only — provider abstraction, sequential `generate_shot` ×4, frame chaining, local filesystem storage. Assemble/deliver and QC/repair are out of scope.
 
 ## Decisions locked in brainstorming

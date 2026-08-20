@@ -11,10 +11,20 @@ from sqlalchemy.ext.asyncio import (
 
 from app.config import Settings
 from app.db.rls import set_tenant_context
+from app.db.urls import to_asyncpg_url
 
 
 def create_engine_from_settings(settings: Settings) -> AsyncEngine:
-    return create_async_engine(settings.database_url, pool_pre_ping=True)
+    url = to_asyncpg_url(settings.database_url)
+    kwargs: dict = {"pool_pre_ping": True}
+    if url.startswith("postgresql"):
+        kwargs.update(
+            pool_size=5,
+            max_overflow=0,
+            pool_recycle=300,
+            pool_timeout=30,
+        )
+    return create_async_engine(url, **kwargs)
 
 
 def get_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

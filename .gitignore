@@ -1,4 +1,5 @@
 .venv/
+.venv-litellm/
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -11,3 +12,4 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 .DS_Store
+data/media/

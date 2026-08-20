@@ -60,3 +60,14 @@ Only now do you write the first line of application code, using
 `M1`: job lifecycle + story planning + continuity bible (per the PRD's milestone table).
 Every rule, ADR, and doc above loads automatically from that first prompt onward — this is
 the point the investment in Phases 0–6 starts paying for itself.
+
+## Phase 8 — Milestone implementation (Aug 2026)
+
+Built in order, each with a superpowers spec + plan:
+
+1. **M1** — job lifecycle, story planning, continuity bible, idempotency, RLS, checkpoints
+2. **M3a** — sequential shot generation, frame chaining, Higgsfield MCP provider
+3. **M3b + M4 + M5** — assemble, deliver, QC/repair, observability, CI gates
+4. **Local test console** — same-origin dev UI at `GET /`
+
+See `README.md` for current status and local setup. Specs live in `docs/superpowers/specs/`.

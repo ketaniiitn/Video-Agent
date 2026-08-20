@@ -1,0 +1,5 @@
+{
+  "continuity_pass_rate": 1.0,
+  "mean_qc_score": 0.9,
+  "cost_usd_per_happy_path_job": 0.10
+}

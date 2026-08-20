@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Video Agent — test bench</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/console.css" />
+  </head>
+  <body>
+    <div class="deck">
+      <header class="mast">
+        <p class="eyebrow">Local test bench · 4 × 10s</p>
+        <h1>Same face. Same room. Forty seconds.</h1>
+        <p class="lede">
+          Type a story. The pipeline plans four beats, locks a continuity bible,
+          generates shots, then stitches one clip. This page is for testing the
+          API — not an editor.
+        </p>
+      </header>
+
+      <div class="layout">
+        <section class="panel script" aria-labelledby="prompt-label">
+          <label id="prompt-label" for="prompt">Story prompt</label>
+          <textarea
+            id="prompt"
+            rows="8"
+            maxlength="4000"
+            placeholder="A courier in a yellow jacket cuts through flooded streets at blue hour, finds a locked gate, then a way through."
+          ></textarea>
+          <div class="actions">
+            <button type="button" id="generate" class="generate">
+              Generate 40s
+            </button>
+            <p id="setup-hint" class="hint" hidden></p>
+          </div>
+        </section>
+
+        <section class="panel gate" aria-live="polite">
+          <div class="status-row">
+            <span class="status-label">Status</span>
+            <span id="status" class="status-pill">idle</span>
+          </div>
+          <p id="job-meta" class="mono meta"></p>
+          <div id="loader" class="telecine" hidden role="status" aria-live="polite">
+            <span class="telecine-gate" aria-hidden="true"></span>
+            <div class="telecine-copy">
+              <p class="telecine-kicker">On the gate</p>
+              <p id="loader-type" class="telecine-type"></p>
+            </div>
+          </div>
+
+          <ol id="strip" class="strip" aria-label="Four beats">
+            <li data-beat="1"><span class="beat-name">setup</span><span class="beat-state">—</span></li>
+            <li data-beat="2"><span class="beat-name">development</span><span class="beat-state">—</span></li>
+            <li data-beat="3"><span class="beat-name">turn</span><span class="beat-state">—</span></li>
+            <li data-beat="4"><span class="beat-name">resolution</span><span class="beat-state">—</span></li>
+          </ol>
+
+          <dl id="bible" class="bible" hidden></dl>
+          <p id="error" class="error" hidden></p>
+          <video id="player" class="player" controls hidden playsinline></video>
+          <a id="download" class="download" hidden>Download assembled.mp4</a>
+        </section>
+      </div>
+    </div>
+    <script src="/static/console.js"></script>
+  </body>
+</html>

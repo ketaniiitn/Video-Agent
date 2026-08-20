@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     Enum,
@@ -69,6 +70,12 @@ class Job(Base):
         Integer, nullable=False, default=0
     )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    degraded: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    assembled_path: Mapped[str | None] = mapped_column(String(1024))
+    download_url: Mapped[str | None] = mapped_column(String(2048))
+    thumbnail_url: Mapped[str | None] = mapped_column(String(2048))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -189,6 +196,13 @@ class Shot(Base):
     provider_id: Mapped[str] = mapped_column(String(255), nullable=False)
     seed: Mapped[int | None] = mapped_column(BigInteger)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    qc_score: Mapped[Decimal | None] = mapped_column(Numeric(6, 4))
+    degraded: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    repair_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -197,6 +211,42 @@ class Shot(Base):
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+
+
+class QcScore(Base):
+    __tablename__ = "qc_scores"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["job_id", "tenant_id"],
+            ["jobs.id", "jobs.tenant_id"],
+            name="fk_qc_scores_job_tenant",
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    job_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("jobs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    shot_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("shots.id", ondelete="SET NULL"),
+    )
+    beat_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+    score: Mapped[Decimal] = mapped_column(Numeric(6, 4), nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
 

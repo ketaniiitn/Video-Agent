@@ -23,6 +23,7 @@ def make_chain_frame_node(
     session_factory: SessionFactory,
     media_root: str,
     extract_frame: FrameExtractor | None = None,
+    terminal_after_chain: bool = True,
 ):
     if beat_index < 1 or beat_index > 4:
         raise ValueError("beat_index must be 1..4")
@@ -72,8 +73,9 @@ def make_chain_frame_node(
             "current_beat_index": beat_index,
         }
         if beat_index == 4:
-            delta["outcome"] = "SUCCESS"
             delta["shots_completed"] = True
+            if terminal_after_chain:
+                delta["outcome"] = "SUCCESS"
         return delta
 
     return chain_frame_node

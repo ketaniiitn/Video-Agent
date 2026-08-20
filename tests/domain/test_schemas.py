@@ -67,6 +67,7 @@ def test_job_status_includes_all_harness_mapped_values():
         "RUNNING",
         "BIBLE_LOCKED",
         "SHOTS_READY",
+        "DELIVERED",
         "PARTIAL",
         "FAILED",
         "FAILED_NO_PROGRESS",

@@ -73,6 +73,12 @@ class JobDetailResponse(BaseModel):
     story_plan: StoryPlan | None = None
     continuity_bible: ContinuityBible | None = None
     shots: list[ShotSummary] = []
+    degraded: bool = False
+    assembled_path: str | None = None
+    download_url: str | None = None
+    thumbnail_url: str | None = None
+    last_error_code: str | None = None
+    last_error_message: str | None = None
 
 
 class ResumeResponse(BaseModel):
@@ -93,6 +99,32 @@ def _parse_tenant_id(raw: str) -> UUID:
         raise AppError(
             "TENANT_ID_INVALID", "X-Tenant-Id must be a UUID", http_status=400
         ) from exc
+
+
+async def _checkpoint_error(graph: object, job_id: UUID, tenant_id: UUID) -> tuple[str | None, str | None]:
+    aget_state = getattr(graph, "aget_state", None)
+    if aget_state is None:
+        return None, None
+    try:
+        snapshot = await aget_state(
+            {
+                "configurable": {
+                    "thread_id": str(job_id),
+                    "tenant_id": str(tenant_id),
+                }
+            }
+        )
+    except Exception:  # noqa: BLE001
+        return None, None
+    values = getattr(snapshot, "values", None) or {}
+    if not isinstance(values, dict):
+        return None, None
+    code = values.get("last_failure_signature")
+    message = values.get("last_error_message")
+    return (
+        str(code) if code else None,
+        str(message) if message else None,
+    )
 
 
 @router.post("", status_code=202, response_model=CreateJobResponse)
@@ -217,6 +249,10 @@ async def get_job(
             )
         ).scalars().all()
 
+    last_error_code, last_error_message = await _checkpoint_error(
+        state.graph, job_id, tenant_id
+    )
+
     return JobDetailResponse(
         job_id=job.id,
         status=job.status,
@@ -238,9 +274,17 @@ async def get_job(
                 clip_path=row.clip_path,
                 frame_path=row.frame_path,
                 cost_usd=row.cost_usd,
+                qc_score=row.qc_score,
+                degraded=row.degraded,
             )
             for row in shot_rows
         ],
+        degraded=job.degraded,
+        assembled_path=job.assembled_path,
+        download_url=job.download_url,
+        thumbnail_url=job.thumbnail_url,
+        last_error_code=last_error_code,
+        last_error_message=last_error_message,
     )
 
 

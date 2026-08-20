@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from decimal import Decimal
@@ -14,10 +15,12 @@ from app.domain.errors import AppError
 from app.domain.schemas import ContinuityBible, JobStatus, ShotStatus, StoryPlan
 from app.graph.budgets import BudgetExceeded, check_budget
 from app.graph.state import VideoAgentState
+from app.observability.logging import log_json, log_json_error
 from app.providers.protocols import GenerateClipRequest, VideoProvider
 from app.storage.local import clip_path, save_bytes
 
 SessionFactory = Callable[[UUID], AbstractAsyncContextManager[AsyncSession]]
+logger = logging.getLogger(__name__)
 
 
 def make_generate_shot_node(
@@ -50,6 +53,7 @@ def make_generate_shot_node(
             return {
                 "prior_frame_path": existing.frame_path,
                 "current_clip_path": existing.clip_path,
+                "current_beat_index": beat_index,
                 **_budget_delta(budget_state),
             }
 
@@ -79,13 +83,39 @@ def make_generate_shot_node(
         except BudgetExceeded:
             return await _partial(budget_state, session_factory, tenant_id, job_id)
 
-        result = await provider.generate_clip(
-            GenerateClipRequest(
-                prompt=prompt,
+        try:
+            log_json(
+                logger,
+                "shot_generation_started",
+                job_id=str(job_id),
+                beat_index=beat_index,
                 duration_seconds=beat.duration_seconds,
-                prior_frame_path=prior,
             )
-        )
+            result = await provider.generate_clip(
+                GenerateClipRequest(
+                    prompt=prompt,
+                    duration_seconds=beat.duration_seconds,
+                    prior_frame_path=prior,
+                )
+            )
+        except AppError as exc:
+            log_json_error(
+                logger,
+                "shot_generation_failed",
+                job_id=str(job_id),
+                beat_index=beat_index,
+                code=exc.code,
+                error=str(exc)[:500],
+            )
+            return await _provider_failure(
+                budget_state,
+                session_factory,
+                tenant_id,
+                job_id,
+                signature=exc.code,
+                error_message=str(exc)[:500],
+                previous=state.get("last_failure_signature"),
+            )
         path = clip_path(media_root, tenant_id, job_id, beat_index)
         await save_bytes(path, result.video_bytes)
 
@@ -131,6 +161,14 @@ def make_generate_shot_node(
             budget_state["budget_used_usd"] = float(job.budget_used_usd)
             budget_state["budget_used_iterations"] = int(job.budget_used_iterations)
 
+        log_json(
+            logger,
+            "shot_generation_succeeded",
+            job_id=str(job_id),
+            beat_index=beat_index,
+            provider_id=result.provider_id,
+            cost_usd=result.cost_usd,
+        )
         return {
             "current_clip_path": str(path),
             "current_beat_index": beat_index,
@@ -221,6 +259,56 @@ def _shot_upsert(
             "attempt_count": values["attempt_count"],
         },
     )
+
+
+async def persist_gateway_usage(
+    session_factory: SessionFactory,
+    tenant_id: UUID,
+    job_id: UUID,
+    usd: float,
+    tokens: int,
+) -> None:
+    async with session_factory(tenant_id) as session:
+        job = await session.get(Job, job_id)
+        if job is None or job.tenant_id != tenant_id:
+            raise AppError("JOB_NOT_FOUND", "Job was not found", http_status=404)
+        job.budget_used_usd = Decimal(str(job.budget_used_usd)) + Decimal(str(usd))
+        job.budget_used_tokens = int(job.budget_used_tokens) + int(tokens)
+        job.budget_used_iterations = int(job.budget_used_iterations) + 1
+        await session.commit()
+
+
+async def _provider_failure(
+    state: dict,
+    session_factory: SessionFactory,
+    tenant_id: UUID,
+    job_id: UUID,
+    *,
+    signature: str,
+    error_message: str | None = None,
+    previous: str | None,
+) -> dict:
+    extra = {
+        "last_failure_signature": signature,
+        "last_error_message": error_message,
+    }
+    if previous == signature:
+        await _set_job_status(
+            session_factory, tenant_id, job_id, JobStatus.FAILED_NO_PROGRESS
+        )
+        return {
+            "outcome": "FAILED_NO_PROGRESS",
+            **extra,
+            **_budget_delta(state),
+        }
+    any_ok = await _any_succeeded_shot(session_factory, tenant_id, job_id)
+    status = JobStatus.PARTIAL if any_ok else JobStatus.FAILED
+    await _set_job_status(session_factory, tenant_id, job_id, status)
+    return {
+        "outcome": "PARTIAL" if any_ok else "FAILED",
+        **extra,
+        **_budget_delta(state),
+    }
 
 
 async def _load_budget(

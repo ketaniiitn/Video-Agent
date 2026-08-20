@@ -5,6 +5,7 @@ from app.db.models import (
     CostLedger,
     IdempotencyKey,
     Job,
+    QcScore,
     Shot,
     StoryPlanRow,
 )
@@ -21,6 +22,10 @@ def test_job_has_all_budget_and_lifecycle_columns():
         "budget_used_tokens",
         "budget_used_iterations",
         "started_at",
+        "degraded",
+        "assembled_path",
+        "download_url",
+        "thumbnail_url",
     }
 
     assert expected <= set(Job.__table__.columns.keys())
@@ -89,6 +94,9 @@ def test_shot_metadata_enforces_beat_and_job_identity():
         "provider_id",
         "seed",
         "prompt",
+        "qc_score",
+        "degraded",
+        "repair_count",
         "created_at",
         "updated_at",
     } == set(Shot.__table__.columns.keys())
@@ -145,3 +153,29 @@ def test_cost_ledger_metadata_and_nullable_shot_reference():
         foreign_key.target_fullname
         for foreign_key in CostLedger.__table__.c.shot_id.foreign_keys
     } == {"shots.id"}
+
+
+def test_qc_scores_are_tenant_scoped_and_optional_shot():
+    assert {
+        "id",
+        "tenant_id",
+        "job_id",
+        "shot_id",
+        "beat_index",
+        "attempt",
+        "score",
+        "rationale",
+        "created_at",
+    } == set(QcScore.__table__.columns.keys())
+    foreign_keys = {
+        (
+            tuple(constraint.columns.keys()),
+            tuple(element.target_fullname for element in constraint.elements),
+        )
+        for constraint in QcScore.__table__.constraints
+        if isinstance(constraint, ForeignKeyConstraint)
+    }
+    assert (
+        ("job_id", "tenant_id"),
+        ("jobs.id", "jobs.tenant_id"),
+    ) in foreign_keys

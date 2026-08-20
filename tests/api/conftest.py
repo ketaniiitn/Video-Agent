@@ -101,7 +101,11 @@ def sweep_session_factory_for(maker: async_sessionmaker[AsyncSession]):
 
 def default_gateway() -> FakeGateway:
     return FakeGateway(
-        responses={"story_plan": VALID_PLAN, "continuity_bible": VALID_BIBLE},
+        responses={
+            "story_plan": VALID_PLAN,
+            "continuity_bible": VALID_BIBLE,
+            "qc_score": {"score": 0.9, "rationale": "matches bible"},
+        },
         usage=Usage(usd=0.01, tokens=10),
     )
 
@@ -137,6 +141,8 @@ async def build_test_app(
     gateway: FakeGateway | None = None,
     feature_story_planning: bool = True,
     feature_shot_generation: bool = False,
+    feature_qc_repair: bool = False,
+    feature_assemble_deliver: bool = False,
     settings: Settings | None = None,
     provider=None,
 ) -> TestApp:
@@ -147,6 +153,8 @@ async def build_test_app(
         _env_file=None,
         feature_story_planning=feature_story_planning,
         feature_shot_generation=feature_shot_generation,
+        feature_qc_repair=feature_qc_repair,
+        feature_assemble_deliver=feature_assemble_deliver,
     )
     redis = fakeredis.aioredis.FakeRedis()
     session_factory = session_factory_for(maker)
@@ -167,6 +175,7 @@ async def build_test_app(
     )
 
     app = create_app()
+    app.state.app_state = state
     app.dependency_overrides[get_app_state] = lambda: state
     client = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
     return TestApp(client, state, maker, tenant_a, tenant_b)

@@ -24,3 +24,9 @@
   threshold, to avoid compounding the failure.
 - **No-progress signature** — the same failure repeating twice, which stops retries
   immediately (`FAILED_NO_PROGRESS`) rather than looping indefinitely.
+- **Presigned URL** — HMAC-signed download link for local artifacts; expires after
+  `PRESIGNED_URL_TTL_SECONDS`. Cloud object storage is deferred — v1 serves from disk.
+- **Feature flag** — env var (`FEATURE_*`) gating graph wiring and config validation for
+  each pipeline stage; new behaviour ships behind a flag per platform non-negotiables.
+- **Local test console** — developer UI at `GET /` for exercising the job API without
+  Swagger; not a product editor.

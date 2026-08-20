@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from decimal import Decimal
@@ -15,10 +16,12 @@ from app.domain.schemas import JobStatus, StoryPlan
 from app.gateway.protocols import GatewayClient, Usage
 from app.graph.budgets import BudgetExceeded, check_budget
 from app.graph.state import VideoAgentState
+from app.observability.logging import log_json
 from app.prompts.registry import get_prompt
 
 SessionFactory = Callable[[UUID], AbstractAsyncContextManager[AsyncSession]]
 _SCHEMA_ATTEMPTS = 3
+logger = logging.getLogger(__name__)
 
 
 async def plan_story_node(
@@ -93,6 +96,7 @@ async def plan_story_node(
             )
         )
         await session.commit()
+        log_json(logger, "story_plan_ready", job_id=str(job_id), beats=len(plan.beats))
         return {
             "story_plan": plan.model_dump(mode="json"),
             **_budget_delta(budget_state),
